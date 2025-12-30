@@ -1,5 +1,5 @@
-#include <errno.h>
-#include <library.h>     // spp types and macros
+#include <sppc/sppc.h>
+#include <errno.h>       // error number definitions
 #include <unistd.h>      // stream operations and macros
 #include <string.h>      // string operations and macros
 #include <fcntl.h>       // file operations and macros
