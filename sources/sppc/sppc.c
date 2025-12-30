@@ -392,27 +392,18 @@ long long time_now_ns(const int clock) {
 }
 
 
-void time_sleep_ms(const long long milliseconds) {
-    struct timespec ts;
-    ts.tv_sec = milliseconds / 1000;
-    ts.tv_nsec = (milliseconds % 1000) * 1000000;
-    nanosleep(&ts, nullptr);
-}
+int time_sleep_ns(const long long nanoseconds) {
+    if (nanoseconds < 0) { return -1; }
+    if (nanoseconds == 0) { return 0; }
 
-
-void time_sleep_us(const long long microseconds) {
-    struct timespec ts;
-    ts.tv_sec = microseconds / 1000000;
-    ts.tv_nsec = (microseconds % 1000000) * 1000;
-    nanosleep(&ts, nullptr);
-}
-
-
-void time_sleep_ns(const long long nanoseconds) {
     struct timespec ts;
     ts.tv_sec = nanoseconds / 1000000000;
     ts.tv_nsec = nanoseconds % 1000000000;
-    nanosleep(&ts, nullptr);
+    while (nanosleep(&ts, nullptr) == -1) {
+        if (errno != EINTR) { return -1; }
+    }
+
+    return 0;
 }
 
 

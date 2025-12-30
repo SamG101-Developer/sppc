@@ -99,11 +99,7 @@ SPPC_API int net_sock_set_nodelay(int socket_fd, bool nodelay);
 
 SPPC_API long long time_now_ns(int clock);
 
-SPPC_API void time_sleep_ms(long long milliseconds);
-
-SPPC_API void time_sleep_us(long long microseconds);
-
-SPPC_API void time_sleep_ns(long long nanoseconds);
+SPPC_API int time_sleep_ns(long long nanoseconds);
 
 SPPC_API long long time_local_tz_offset_seconds();
 
