@@ -42,6 +42,7 @@ typedef struct {
 } spinlock_table_t;
 
 
+constexpr auto PATH_MAX = 4096;
 static unsigned long long RNG_STATE = 0;
 
 static mutex_table_t *MUTEX_TABLE = nullptr;
@@ -415,7 +416,7 @@ void time_sleep_ns(const long long nanoseconds) {
 }
 
 
-long long time_locl_tz_offset_seconds() {
+long long time_local_tz_offset_seconds() {
     const auto now = time(nullptr);
     struct tm gmt_tm;
     struct tm local_tm;
@@ -425,12 +426,23 @@ long long time_locl_tz_offset_seconds() {
 }
 
 
-int time_local_tz_name(unsigned char *restrict buffer, const size_t size) {
-    if (buffer == nullptr || size == 0) { return -1; }
+int time_local_tz_name(unsigned char **restrict buffer) {
+    if (buffer == nullptr) { return -1; }
     const auto now = time(nullptr);
     struct tm local_tm;
     if (localtime_r(&now, &local_tm) == nullptr) { return -1; }
-    if (strftime((char*)buffer, size, "%Z", &local_tm) == 0) { return -1; }
+
+    const auto size = strftime(nullptr, 0, "%Z", &local_tm);
+    if (size == 0) { return -1; }
+    const auto tz = (unsigned char*)malloc(size + 1);
+    if (tz == nullptr) { return -1; }
+
+    if (strftime((char*)tz, size + 1, "%Z", &local_tm) == 0) {
+        free(tz);
+        return -1;
+    }
+
+    *buffer = tz;
     return 0;
 }
 
@@ -540,8 +552,17 @@ int proc_is_running(const int pid) {
 }
 
 
-void proc_get_cwd(unsigned char *restrict buffer, const size_t size) {
-    return (void)getcwd((char*)buffer, size);
+int proc_get_cwd(unsigned char **restrict buffer) {
+    if (buffer == nullptr) { return -1; }
+
+    const auto cwd = getcwd(nullptr, 0);
+    if (cwd == nullptr) {
+        *buffer = nullptr;
+        return -1;
+    }
+
+    *buffer = (unsigned char*)cwd;
+    return 0;
 }
 
 
@@ -645,11 +666,17 @@ int fs_chmod(unsigned char const *restrict path, const unsigned int mode) {
 }
 
 
-int fs_symlink_target(unsigned char const *restrict path, unsigned char *restrict buffer, const size_t size) {
-    if (path == nullptr || buffer == nullptr || size == 0) { return -1; }
-    const auto len = readlink((const char*)path, (char*)buffer, size - 1);
-    if (len < 0) { return -1; }
-    buffer[len] = '\0';
+int fs_symlink_target(unsigned char const *restrict path, unsigned char **restrict buffer) {
+    if (path == nullptr || buffer == nullptr) { return -1; }
+    const auto link_target = (char*)malloc(PATH_MAX);
+    if (link_target == nullptr) { return -1; }
+    const auto len = readlink((const char*)path, link_target, PATH_MAX - 1);
+    if (len < 0) {
+        free(link_target);
+        return -1;
+    }
+    link_target[len] = '\0';
+    *buffer = (unsigned char*)link_target;
     return 0;
 }
 

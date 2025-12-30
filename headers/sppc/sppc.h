@@ -107,7 +107,7 @@ SPPC_API void time_sleep_ns(long long nanoseconds);
 
 SPPC_API long long time_local_tz_offset_seconds();
 
-SPPC_API int time_local_tz_name(unsigned char *restrict buffer, size_t size);
+SPPC_API int time_local_tz_name(unsigned char **restrict buffer);
 
 SPPC_API int proc_get_pid();
 
@@ -127,7 +127,7 @@ SPPC_API int proc_kill(int pid);
 
 SPPC_API int proc_is_running(int pid);
 
-SPPC_API void proc_get_cwd(unsigned char *restrict buffer, size_t size);
+SPPC_API int proc_get_cwd(unsigned char **restrict buffer);
 
 SPPC_API int proc_set_cwd(unsigned char const *restrict path);
 
@@ -159,7 +159,7 @@ SPPC_API int fs_rmdir(unsigned char const *restrict path);
 
 SPPC_API int fs_chmod(unsigned char const *restrict path, unsigned int mode);
 
-SPPC_API int fs_symlink_target(unsigned char const *restrict path, unsigned char *restrict buffer, size_t size);
+SPPC_API int fs_symlink_target(unsigned char const *restrict path, unsigned char **restrict buffer);
 
 SPPC_API int sys_cpu_count();
 
