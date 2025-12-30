@@ -127,11 +127,9 @@ SPPC_API int proc_kill(int pid);
 
 SPPC_API int proc_is_running(int pid);
 
-SPPC_API unsigned char* proc_getcwd(unsigned char *restrict buffer, size_t size);
+SPPC_API void proc_get_cwd(unsigned char *restrict buffer, size_t size);
 
-SPPC_API int proc_setcwd(unsigned char const *restrict path);
-
-SPPC_API int proc_pipe(int read_fd, int write_fd);
+SPPC_API int proc_set_cwd(unsigned char const *restrict path);
 
 SPPC_API void rng_seed(unsigned long long seed);
 

@@ -522,12 +522,12 @@ int proc_is_running(const int pid) {
 }
 
 
-unsigned char* proc_getcwd(unsigned char *restrict buffer, const size_t size) {
-    return (unsigned char*)getcwd((char*)buffer, size);
+void proc_get_cwd(unsigned char *restrict buffer, const size_t size) {
+    return (void)getcwd((char*)buffer, size);
 }
 
 
-int proc_setcwd(unsigned char const *restrict path) {
+int proc_set_cwd(unsigned char const *restrict path) {
     if (path == nullptr) { return -1; }
     return chdir((const char*)path);
 }
