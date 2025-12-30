@@ -10,6 +10,7 @@
 #include <sys/socket.h>  // socket operations and macros
 #include <sys/wait.h>    // process control operations and macros
 #include <sys/stat.h>    // file status operations and macros
+#include <arpa/inet.h>   // internet operations and macros
 #include <netinet/tcp.h> // TCP protocol definitions
 #include <time.h>        // time functions and macros
 #include <pthread.h>     // POSIX threads operations and macros
@@ -311,11 +312,28 @@ long long net_sock_sendto(const int socket_fd, unsigned char const *data, const 
 }
 
 
-long long net_sock_recvfrom(const int socket_fd, unsigned char *buffer, const size_t size) {
-    if (socket_fd < 0 || buffer == nullptr || size == 0) { return -1; }
+long long net_sock_recvfrom(const int socket_fd, unsigned char *buffer, const size_t size, unsigned char *restrict host_buffer, unsigned short *restrict port) {
+    if (socket_fd < 0 || buffer == nullptr || size == 0 || host_buffer == nullptr || port == nullptr) { return -1; }
     struct sockaddr_storage src_addr;
     socklen_t addr_len = sizeof(src_addr);
-    return recvfrom(socket_fd, buffer, size, 0, (struct sockaddr*)&src_addr, &addr_len);
+    const auto len = recvfrom(socket_fd, buffer, size, 0, (struct sockaddr*)&src_addr, &addr_len);
+    if (len < 0) { return -1; }
+
+    // Extract source address and port.
+    if (src_addr.ss_family == AF_INET) {
+        const auto s = (struct sockaddr_in*)&src_addr;
+        inet_ntop(AF_INET, &s->sin_addr, (char*)host_buffer, NI_MAXHOST);
+        *port = ntohs(s->sin_port);
+    }
+    else if (src_addr.ss_family == AF_INET6) {
+        const auto s = (struct sockaddr_in6*)&src_addr;
+        inet_ntop(AF_INET6, &s->sin6_addr, (char*)host_buffer, NI_MAXHOST);
+        *port = ntohs(s->sin6_port);
+    }
+    else {
+        return -1; // Unknown address family
+    }
+    return len;
 }
 
 

@@ -83,7 +83,7 @@ SPPC_API int net_sock_close(int socket_fd);
 
 SPPC_API long long net_sock_sendto(int socket_fd, unsigned char const *data, size_t size, unsigned char const *restrict host, unsigned short port);
 
-SPPC_API long long net_sock_recvfrom(int socket_fd, unsigned char *buffer, size_t size);
+SPPC_API long long net_sock_recvfrom(int socket_fd, unsigned char *buffer, size_t size, unsigned char *restrict host_buffer, unsigned short *restrict port);
 
 SPPC_API int net_sock_set_nonblocking(int socket_fd, bool non_blocking);
 
