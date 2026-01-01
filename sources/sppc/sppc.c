@@ -595,7 +595,7 @@ int fs_exists(unsigned char const *restrict path) {
 }
 
 
-int fs_isfile(unsigned char const *restrict path) {
+int fs_is_file(unsigned char const *restrict path) {
     if (path == nullptr) { return -1; }
     struct stat path_stat;
     if (stat((const char*)path, &path_stat) != 0) { return -1; }
@@ -603,7 +603,7 @@ int fs_isfile(unsigned char const *restrict path) {
 }
 
 
-int fs_isdir(unsigned char const *restrict path) {
+int fs_is_dir(unsigned char const *restrict path) {
     if (path == nullptr) { return -1; }
     struct stat path_stat;
     if (stat((const char*)path, &path_stat) != 0) { return -1; }
@@ -611,7 +611,7 @@ int fs_isdir(unsigned char const *restrict path) {
 }
 
 
-int fs_issymlink(unsigned char const *restrict path) {
+int fs_is_symlink(unsigned char const *restrict path) {
     if (path == nullptr) { return -1; }
     struct stat path_stat;
     if (lstat((const char*)path, &path_stat) != 0) { return -1; }

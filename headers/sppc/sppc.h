@@ -137,11 +137,11 @@ SPPC_API void rng_fill_bytes(unsigned char *buffer, size_t size);
 
 SPPC_API int fs_exists(unsigned char const *restrict path);
 
-SPPC_API int fs_isfile(unsigned char const *restrict path);
+SPPC_API int fs_is_file(unsigned char const *restrict path);
 
-SPPC_API int fs_isdir(unsigned char const *restrict path);
+SPPC_API int fs_is_dir(unsigned char const *restrict path);
 
-SPPC_API int fs_issymlink(unsigned char const *restrict path);
+SPPC_API int fs_is_symlink(unsigned char const *restrict path);
 
 SPPC_API long long fs_file_size(unsigned char const *restrict path);
 
