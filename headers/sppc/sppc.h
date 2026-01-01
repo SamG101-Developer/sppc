@@ -185,7 +185,7 @@ SPPC_API int mutex_create();
 
 SPPC_API int mutex_lock(int mutex_id);
 
-SPPC_API int mutex_trylock(int mutex_id);
+SPPC_API int mutex_try_lock(int mutex_id);
 
 SPPC_API int mutex_unlock(int mutex_id);
 

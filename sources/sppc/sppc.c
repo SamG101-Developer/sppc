@@ -761,7 +761,7 @@ int mutex_lock(const int mutex_id) {
 }
 
 
-int mutex_trylock(const int mutex_id) {
+int mutex_try_lock(const int mutex_id) {
     if (mutex_id < 0 || (size_t)mutex_id >= MUTEX_CAP) { return -1; }
     return pthread_mutex_trylock(&MUTEX_TABLE[mutex_id].primitive);
 }
