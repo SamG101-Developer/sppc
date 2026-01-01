@@ -203,13 +203,13 @@ SPPC_API int condvar_destroy(int condvar_id);
 
 SPPC_API int rwlock_create();
 
-SPPC_API int rwlock_rdlock(int rwlock_id);
+SPPC_API int rwlock_read_lock(int rwlock_id);
 
-SPPC_API int rwlock_wrlock(int rwlock_id);
+SPPC_API int rwlock_write_lock(int rwlock_id);
 
-SPPC_API int rwlock_tryrdlock(int rwlock_id);
+SPPC_API int rwlock_try_read_lock(int rwlock_id);
 
-SPPC_API int rwlock_trywrlock(int rwlock_id);
+SPPC_API int rwlock_try_write_lock(int rwlock_id);
 
 SPPC_API int rwlock_unlock(int rwlock_id);
 
@@ -225,7 +225,7 @@ SPPC_API int spinlock_create();
 
 SPPC_API int spinlock_lock(int spinlock_id);
 
-SPPC_API int spinlock_trylock(int spinlock_id);
+SPPC_API int spinlock_try_lock(int spinlock_id);
 
 SPPC_API int spinlock_unlock(int spinlock_id);
 

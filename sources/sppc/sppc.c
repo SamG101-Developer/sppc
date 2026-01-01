@@ -822,25 +822,25 @@ int rwlock_create() {
 }
 
 
-int rwlock_rdlock(const int rwlock_id) {
+int rwlock_read_lock(const int rwlock_id) {
     if (rwlock_id < 0 || (size_t)rwlock_id >= RWLOCK_CAP) { return -1; }
     return pthread_rwlock_rdlock(&RWLOCK_TABLE[rwlock_id].primitive);
 }
 
 
-int rwlock_wrlock(const int rwlock_id) {
+int rwlock_write_lock(const int rwlock_id) {
     if (rwlock_id < 0 || (size_t)rwlock_id >= RWLOCK_CAP) { return -1; }
     return pthread_rwlock_wrlock(&RWLOCK_TABLE[rwlock_id].primitive);
 }
 
 
-int rwlock_tryrdlock(const int rwlock_id) {
+int rwlock_try_read_lock(const int rwlock_id) {
     if (rwlock_id < 0 || (size_t)rwlock_id >= RWLOCK_CAP) { return -1; }
     return pthread_rwlock_tryrdlock(&RWLOCK_TABLE[rwlock_id].primitive);
 }
 
 
-int rwlock_trywrlock(const int rwlock_id) {
+int rwlock_trywrite_lock(const int rwlock_id) {
     if (rwlock_id < 0 || (size_t)rwlock_id >= RWLOCK_CAP) { return -1; }
     return pthread_rwlock_trywrlock(&RWLOCK_TABLE[rwlock_id].primitive);
 }
@@ -886,7 +886,7 @@ int spinlock_lock(const int spinlock_id) {
 }
 
 
-int spinlock_trylock(const int spinlock_id) {
+int spinlock_try_lock(const int spinlock_id) {
     if (spinlock_id < 0 || (size_t)spinlock_id >= SPINLOCK_CAP) { return -1; }
     return pthread_spin_trylock(&SPINLOCK_TABLE[spinlock_id].primitive);
 }
