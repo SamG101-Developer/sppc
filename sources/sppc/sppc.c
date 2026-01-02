@@ -858,7 +858,7 @@ int rwlock_destroy(const int rwlock_id) {
 }
 
 
-int barrier_create(const int count) {
+int barrier_create(const unsigned int count) {
     _thread_create_helper(BARRIER, barrier, barrier, count);
 }
 

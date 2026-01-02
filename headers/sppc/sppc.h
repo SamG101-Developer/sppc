@@ -215,7 +215,7 @@ SPPC_API int rwlock_unlock(int rwlock_id);
 
 SPPC_API int rwlock_destroy(int rwlock_id);
 
-SPPC_API int barrier_create(int count);
+SPPC_API int barrier_create(unsigned int count);
 
 SPPC_API int barrier_wait(int barrier_id);
 
