@@ -840,7 +840,7 @@ int rwlock_try_read_lock(const int rwlock_id) {
 }
 
 
-int rwlock_trywrite_lock(const int rwlock_id) {
+int rwlock_try_write_lock(const int rwlock_id) {
     if (rwlock_id < 0 || (size_t)rwlock_id >= RWLOCK_CAP) { return -1; }
     return pthread_rwlock_trywrlock(&RWLOCK_TABLE[rwlock_id].primitive);
 }
