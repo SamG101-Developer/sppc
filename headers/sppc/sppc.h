@@ -1,8 +1,8 @@
 #pragma once
-
 #include <sppc/macros.h>
+#include <pthread.h>
 #include <stddef.h>
-
+#include <unistd.h>
 
 /**
  * https://en.cppreference.com/w/c/io/fread
@@ -16,7 +16,6 @@
  */
 SPPC_API size_t fd_read(void *restrict buffer, size_t size, size_t count, int fd);
 
-
 /**
  * https://en.cppreference.com/w/c/io/fwrite
  * A low level function to write data from a buffer to a stream. The total size of data written is determined by
@@ -29,7 +28,6 @@ SPPC_API size_t fd_read(void *restrict buffer, size_t size, size_t count, int fd
  * @return A size_t value representing the total number of elements successfully written to the stream.
  */
 SPPC_API size_t fd_write(void const *restrict buffer, size_t size, size_t count, int fd);
-
 
 /**
  * https://en.cppreference.com/w/c/io/fopen
@@ -45,11 +43,11 @@ SPPC_API int fd_close(int fd);
 
 SPPC_API int fd_flush(int fd);
 
-SPPC_API int fd_seek(int fd, long long offset, int whence);
+SPPC_API off_t fd_seek(int fd, off_t offset, int whence);
 
-SPPC_API long long fd_tell(int fd);
+SPPC_API off_t fd_tell(int fd);
 
-SPPC_API int fd_truncate(int fd, long long length);
+SPPC_API int fd_truncate(int fd, off_t length);
 
 SPPC_API int fd_lock_ex(int fd, bool non_blocking);
 
@@ -64,6 +62,18 @@ SPPC_API void* mem_calloc(size_t num, size_t size);
 SPPC_API void mem_dealloc(void *ptr);
 
 SPPC_API void* mem_realloc(void *ptr, size_t new_size);
+
+SPPC_API size_t str_len(unsigned char const *str);
+
+SPPC_API bool str_empty(unsigned char const *str);
+
+SPPC_API int str_cmp(unsigned char const *str1, unsigned char const *str2);
+
+SPPC_API int str_cpy(unsigned char *restrict dest, unsigned char const *restrict src, size_t dest_size);
+
+SPPC_API int str_cat(unsigned char *restrict dest, unsigned char const *restrict src, size_t dest_size);
+
+SPPC_API int str_str(unsigned char const *haystack, unsigned char const *needle);
 
 SPPC_API int net_sock_init(int domain, int type, int protocol);
 
@@ -83,7 +93,7 @@ SPPC_API int net_sock_close(int socket_fd);
 
 SPPC_API long long net_sock_sendto(int socket_fd, unsigned char const *data, size_t size, unsigned char const *restrict host, unsigned short port);
 
-SPPC_API long long net_sock_recvfrom(int socket_fd, unsigned char *buffer, size_t size, unsigned char *restrict host_buffer, unsigned short *restrict port);
+SPPC_API long long net_sock_recvfrom(int socket_fd, unsigned char *buffer, size_t size, unsigned char *restrict host_buffer, size_t host_size, unsigned short *restrict port);
 
 SPPC_API int net_sock_set_nonblocking(int socket_fd, bool non_blocking);
 
@@ -111,7 +121,7 @@ SPPC_API int proc_get_parent_pid();
 
 SPPC_API int proc_set_env(unsigned char const *restrict key, unsigned char const *restrict value, bool overwrite);
 
-SPPC_API unsigned char* proc_get_env(unsigned char const *restrict key);
+SPPC_API unsigned char const* proc_get_env(unsigned char const *restrict key);
 
 SPPC_API int proc_unset_env(unsigned char const *restrict key);
 
@@ -157,29 +167,29 @@ SPPC_API int fs_chmod(unsigned char const *restrict path, unsigned int mode);
 
 SPPC_API int fs_symlink_target(unsigned char const *restrict path, unsigned char **restrict buffer);
 
-SPPC_API int sys_cpu_count();
+SPPC_API long sys_cpu_count();
 
-SPPC_API long long sys_page_size();
+SPPC_API long sys_page_size();
 
-SPPC_API unsigned long long sys_thread_id();
+SPPC_API pthread_t sys_thread_id();
 
-SPPC_API int thread_spawn(void*(*start_routine)(void *));
+SPPC_API pthread_t thread_spawn(void*(*start_routine)(void *));
 
-SPPC_API int thread_join(int thread_id);
+SPPC_API int thread_join(pthread_t thread_id);
 
-SPPC_API int thread_detach(int thread_id);
+SPPC_API int thread_detach(pthread_t thread_id);
 
-SPPC_API int thread_kill(int thread_id);
+SPPC_API int thread_kill(pthread_t thread_id);
 
-SPPC_API int thread_cancel(int thread_id);
+SPPC_API int thread_cancel(pthread_t thread_id);
 
-SPPC_API int thread_equal(int thread_id_1, int thread_id_2);
+SPPC_API int thread_equal(pthread_t thread_id_1, pthread_t thread_id_2);
 
 SPPC_API int thread_yield();
 
 SPPC_API int thread_sleep_ms(long long milliseconds);
 
-SPPC_API int thread_get_id();
+SPPC_API pthread_t thread_get_id();
 
 SPPC_API int mutex_create();
 
