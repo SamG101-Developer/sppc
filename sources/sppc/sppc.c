@@ -4,6 +4,8 @@
 #include <fcntl.h>        // file operations and macros
 #include <poll.h>         // polling operations and macros
 #include <libgen.h>       // path manipulation functions and macros
+#include <locale.h>       // locale functions and macros
+#include <malloc.h>       // memory allocation functions and macros
 #include <netdb.h>        // network database operations and macros
 #include <stdlib.h>       // memory allocation functions
 #include <stdio.h>        // standard I/O operations and macros
@@ -143,12 +145,38 @@ static uint64_t _xoshiro256ss_next(uint64_t s[4]) {
     return result;
 }
 
-void init_c() {
-    signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to prevent crashes on broken pipes.
+void init_c(void) {
+    signal(SIGPIPE, SIG_IGN); // let write() return EPIPE instead of killing the process when writing to a closed fd.
+    signal(SIGCHLD, SIG_DFL); // ensure zombie reaping works correctly.
+    signal(SIGHUP,  SIG_IGN); // ignore SIGHUP to prevent accidental termination when the controlling terminal is closed.
     _prng_ensure_seeded();
+    setlocale(LC_ALL, "");
+    tzset();
+    pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, NULL);
+    pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
+    mallopt(M_TRIM_THRESHOLD, 128 * 1024);  // trim after 128KB free
+    mallopt(M_MMAP_THRESHOLD, 64  * 1024);  // mmap allocations above 64KB
+
+    // struct rlimit rl;
+    // if (getrlimit(RLIMIT_NOFILE, &rl) == 0) {
+    //     rl.rlim_cur = rl.rlim_max;
+    //     setrlimit(RLIMIT_NOFILE, &rl);
+    // }
+
+    // struct rlimit core_rl;
+    // if (getrlimit(RLIMIT_CORE, &core_rl) == 0) {
+    //     core_rl.rlim_cur = core_rl.rlim_max;
+    //     setrlimit(RLIMIT_CORE, &core_rl);
+    // }
 }
 
-int get_errno() {
+void cleanup_c(void) {
+    signal(SIGPIPE, SIG_DFL);
+    signal(SIGHUP,  SIG_DFL);
+    sync();
+}
+
+int get_errno(void) {
     return local_errno;
 }
 

@@ -19,7 +19,8 @@
  * example, we change some default behaviour to set "errno" rather than killing the process, as this is much better for
  * S++ to interface with.
  */
-SPPC_API void init_c();
+SPPC_API void init_c(void);
+SPPC_API void cleanup_c(void);
 
 /**
  * A threadsafe function to get the current value of "errno". This means that multithreading can't clobber errno values,
@@ -28,7 +29,7 @@ SPPC_API void init_c();
  * thread. This is set by the other functions in this API when an error occurs, and can be used to check for errors
  * after calling those functions.
  */
-SPPC_API int get_errno();
+SPPC_API int get_errno(void);
 
 /**
  * https://man7.org/linux/man-pages/man2/read.2.html
