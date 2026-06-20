@@ -1,6 +1,10 @@
 #pragma once
+#include <fcntl.h>
+#include <poll.h>
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdint.h>
+#include <unistd.h>
 
 /**
  * Helper struct for the "stat" family of functions, which return information about a file or stream. This is a
@@ -11,9 +15,9 @@ typedef struct {
     uint64_t size; // file size in bytes
     uint64_t blocks; // blocks allocated
     uint32_t block_size; // preferred block size for I/O
-    uint32_t mode; // permissions + type flags
-    uint32_t uid; // owner user id
-    uint32_t gid; // owner group id
+    mode_t mode; // permissions + type flags
+    uid_t uid; // owner user id
+    gid_t gid; // owner group id
     uint64_t inode; // inode number
     uint64_t nlink; // number of hard links
     uint64_t atime; // last access time (seconds since epoch)
@@ -24,17 +28,12 @@ typedef struct {
 typedef struct {
     uint64_t total_bytes;
     uint64_t free_bytes;
-    uint64_t avail_bytes;
+    uint64_t available_bytes;
     uint64_t total_inodes;
     uint64_t free_inodes;
     uint64_t block_size;
-    uint64_t max_filename;
+    uint64_t max_filename_len;
 } fs_statvfs_t;
-
-typedef struct {
-    int read_fd;
-    int write_fd;
-} fd_pipe_t;
 
 typedef struct {
     int fd;
