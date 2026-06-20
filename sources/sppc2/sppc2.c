@@ -1,18 +1,20 @@
 #define _GNU_SOURCE
 
 #include <sppc2/sppc2.h>
+#include <sppc2/inner/rng.h>
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
 #include <errno.h>
-#include <pthread.h>
 #include <fcntl.h>
 #include <locale.h>
 #include <malloc.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/random.h>
 #include <sys/socket.h>
 
 static pthread_mutex_t _stdin_mutex;
@@ -806,6 +808,44 @@ void c_abort() {
     abort();
 }
 
+int c_set_sockaddr_storage_v4(uint8_t const *octets, const uint16_t port, struct sockaddr_storage *restrict out_storage) {
+    const auto addr = (struct sockaddr_in*)out_storage;
+    addr->sin_family = AF_INET;
+    addr->sin_port = htons(port);
+    memset(&addr->sin_zero, 0, sizeof(addr->sin_zero));
+    memcpy(&addr->sin_addr.s_addr, octets, 4);
+    return 0;
+}
+
+int c_set_sockaddr_storage_v6(uint16_t const *segments, const uint16_t port, struct sockaddr_storage *restrict out_storage) {
+    const auto addr = (struct sockaddr_in6*)out_storage;
+    addr->sin6_family = AF_INET6;
+    addr->sin6_port = htons(port);
+    addr->sin6_flowinfo = 0;
+    addr->sin6_scope_id = 0;
+    memcpy(&addr->sin6_addr.s6_addr, segments, 16);
+    return 0;
+}
+
+int c_get_sockaddr_storage_v4(struct sockaddr_storage const *restrict storage, uint8_t *out_octets, uint16_t *out_port) {
+    const auto addr = (struct sockaddr_in*)storage;
+    memcpy(out_octets, &addr->sin_addr.s_addr, 4);
+    *out_port = ntohs(addr->sin_port);
+    return 0;
+}
+
+int c_get_sockaddr_storage_v6(struct sockaddr_storage const *restrict storage, uint16_t *out_segments, uint16_t *out_port) {
+    const auto addr = (struct sockaddr_in6*)storage;
+    memcpy(out_segments, &addr->sin6_addr.s6_addr, 16);
+    *out_port = ntohs(addr->sin6_port);
+    return 0;
+}
+
+int c_sockaddr_family(struct sockaddr_storage const *restrict storage, int *restrict out_family) {
+    *out_family = storage->ss_family;
+    _return_success
+}
+
 int c_socket(const int domain, const int type, const int protocol, int *restrict out_fd) {
     _extract_err socket(domain, type, protocol);
     *out_fd = err < 0 ? -1 : err;
@@ -978,4 +1018,53 @@ int c_clockgettime(const clockid_t clock_id, struct timespec *restrict out_tp) {
 int c_sleep(const clockid_t clock, const int flags, struct timespec const *restrict duration) {
     _extract_err clock_nanosleep(clock, flags, duration, NULL);
     _return_normalized_err
+}
+
+int c_prngseed(const uint64_t seed) {
+    _extract_err prng_init_from_seed(&SPPC_PRNG_STATE, seed);
+    _return_normalized_err
+}
+
+int c_prngreset(void) {
+    _extract_err prng_init_from_os(&SPPC_PRNG_STATE);
+    _return_normalized_err
+}
+
+int c_prngbytes(const size_t size, void *restrict out) {
+    for (size_t i = 0; i < size; i += 8) {
+        auto rand_val = xoshiro256ss(SPPC_PRNG_STATE.state);
+        const auto bytes_to_copy = size - i < 8 ? size - i : 8;
+        memcpy((uint8_t*)out + i, &rand_val, bytes_to_copy);
+    }
+    _return_success
+}
+
+int c_prngu64(uint64_t *restrict out) {
+    *out = xoshiro256ss(SPPC_PRNG_STATE.state);
+    _return_success
+}
+
+int c_prngu32(uint32_t *restrict out) {
+    *out = (uint32_t)xoshiro256ss(SPPC_PRNG_STATE.state);
+    _return_success
+}
+
+int c_prngdouble(double *restrict out) {
+    *out = (double)(xoshiro256ss(SPPC_PRNG_STATE.state) >> 11) * (1.0 / (1ULL << 53));
+    _return_success
+}
+
+int c_csprngbytes(const size_t size, void *restrict out) {
+    _extract_err getrandom(out, size, 0);
+    _return_success
+}
+
+int c_csprngu32(uint32_t *restrict out) {
+    _extract_err getrandom(out, sizeof(uint32_t), 0);
+    _return_success
+}
+
+int c_csprngu64(uint64_t *restrict out) {
+    _extract_err getrandom(out, sizeof(uint64_t), 0);
+    _return_success
 }

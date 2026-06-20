@@ -16,6 +16,8 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 
+typedef int64_t ssize_t;
+
 #ifndef DEBUG_BUILD // Set from cmake.
 #define DEBUG_BUILD 0
 #endif
@@ -167,6 +169,11 @@ SPPC_API SPPC_NORETURN void c_exit(int status);
 SPPC_API SPPC_NORETURN void c_exit_clean(int status);
 SPPC_API SPPC_NORETURN void c_abort();
 
+SPPC_API int c_set_sockaddr_v4(uint8_t const *octets, uint16_t port, struct sockaddr_storage *restrict out_storage);
+SPPC_API int c_set_sockaddr_v6(uint16_t const *segments, uint16_t port, struct sockaddr_storage *restrict out_storage);
+SPPC_API int c_get_sockaddr_v4(struct sockaddr_storage const *restrict storage, uint8_t *out_octets, uint16_t *out_port);
+SPPC_API int c_get_sockaddr_v6(struct sockaddr_storage const *restrict storage, uint16_t *out_segments, uint16_t *out_port);
+SPPC_API int c_sockaddr_family(struct sockaddr_storage const *restrict storage, int *restrict out_family);
 SPPC_API int c_socket(int domain, int type, int protocol, int *restrict out_fd);
 SPPC_API int c_shutdown(int fd, int how);
 SPPC_API int c_connect(int fd, struct sockaddr_storage const *restrict storage);
@@ -197,3 +204,13 @@ SPPC_API int c_getpeername(int fd, struct sockaddr_storage *restrict out_storage
 
 SPPC_API int c_clock_gettime(clockid_t clock_id, struct timespec *restrict out_tp);
 SPPC_API int c_clock_nanosleep(clockid_t clock, int flags, struct timespec const *restrict duration);
+
+SPPC_API int c_prngseed(uint64_t seed);
+SPPC_API int c_prngreset(void);
+SPPC_API int c_prngbytes(size_t size, void *restrict out);
+SPPC_API int c_prngu32(uint32_t *restrict out);
+SPPC_API int c_prngu64(uint64_t *restrict out);
+SPPC_API int c_prngdouble(double *restrict out);
+SPPC_API int c_csprngbytes(size_t size, void *restrict out);
+SPPC_API int c_csprngu32(uint32_t *restrict out);
+SPPC_API int c_csprngu64(uint64_t *restrict out);
