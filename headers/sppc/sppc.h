@@ -207,10 +207,11 @@ SPPC_API int c_clock_nanosleep(clockid_t clock, int flags, struct timespec const
 
 SPPC_API int c_prngseed(uint64_t seed);
 SPPC_API int c_prngreset(void);
-SPPC_API int c_prngbytes(size_t size, void *restrict out);
+SPPC_API int c_prngbytes(size_t size, char *restrict out);
 SPPC_API int c_prngu32(uint32_t *restrict out);
 SPPC_API int c_prngu64(uint64_t *restrict out);
 SPPC_API int c_prngdouble(double *restrict out);
-SPPC_API int c_csprngbytes(size_t size, void *restrict out);
+SPPC_API int c_prngbetween(uint64_t min, uint64_t max, uint64_t *restrict out);
+SPPC_API int c_csprngbytes(size_t size, char *restrict out);
 SPPC_API int c_csprngu32(uint32_t *restrict out);
 SPPC_API int c_csprngu64(uint64_t *restrict out);

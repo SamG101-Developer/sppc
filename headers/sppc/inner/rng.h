@@ -48,3 +48,13 @@ static int prng_init_from_os(prng_state_t *state) {
     state->seeded = true;
     return 0;
 }
+
+static int prng_bounded(prng_state_t *state, const uint64_t max) {
+    if (max == 0) { return xoshiro256ss(state->state); }
+    const auto t = (-max) % max;
+    while (true) {
+        const auto x = xoshiro256ss(state->state);
+        const auto m = (__uint128_t)x * max;
+        if (m > t) { return m >> 64; }
+    }
+}

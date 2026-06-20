@@ -1030,7 +1030,7 @@ int c_prngreset(void) {
     _return_normalized_err
 }
 
-int c_prngbytes(const size_t size, void *restrict out) {
+int c_prngbytes(const size_t size, char *restrict out) {
     for (size_t i = 0; i < size; i += 8) {
         auto rand_val = xoshiro256ss(SPPC_PRNG_STATE.state);
         const auto bytes_to_copy = size - i < 8 ? size - i : 8;
@@ -1054,7 +1054,13 @@ int c_prngdouble(double *restrict out) {
     _return_success
 }
 
-int c_csprngbytes(const size_t size, void *restrict out) {
+int c_prngbetween(const uint64_t min, const uint64_t max, uint64_t *restrict out) {
+    if (min > max) { return 0; }
+    *out = min + prng_bounded(&SPPC_PRNG_STATE, max - min + 1);
+    _return_success
+}
+
+int c_csprngbytes(const size_t size, char *restrict out) {
     _extract_err getrandom(out, size, 0);
     _return_success
 }
