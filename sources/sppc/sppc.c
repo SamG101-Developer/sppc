@@ -604,7 +604,7 @@ int c_statvfs(char const *restrict path, struct statvfs *restrict out) {
     _return_normalized_err
 }
 
-int c_copy_file_range(const int fd_in, const int fd_out, const size_t len, const int flags) {
+int c_copyfile(const int fd_in, const int fd_out, const size_t len, const int flags) {
     _extract_err copy_file_range(fd_in, NULL, fd_out, NULL, len, flags);
     _return_normalized_err
 }
