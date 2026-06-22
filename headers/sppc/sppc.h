@@ -125,7 +125,7 @@ SPPC_API int c_readlink(char const *restrict path, char *restrict buffer, size_t
 SPPC_API int c_mktemp(char *restrict path, int *restrict out_fd);
 SPPC_API int c_mktemp_dir(char *restrict path);
 SPPC_API int c_statvfs(char const *restrict path, struct statvfs *restrict out);
-SPPC_API int c_copy_file_range(int fd_in, off_t *restrict off_in, int fd_out, off_t *restrict off_out, size_t len, int flags);
+SPPC_API int c_copyfile(int fd_in, int fd_out, size_t len, int flags);
 SPPC_API int c_getcwd(char *restrict buffer, size_t size);
 SPPC_API int c_chdir(char const *restrict path);
 
