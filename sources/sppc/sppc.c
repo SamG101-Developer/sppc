@@ -489,9 +489,10 @@ int c_isatty(const int fd, bool *restrict out) {
     _return_normalized_err
 }
 
-int c_exists(char const *restrict path) {
+int c_exists(char const *restrict path, bool *restrict out) {
     struct stat st = {};
     _extract_err lstat(path, &st);
+    if (err == 0) { *out = true; }
     _return_normalized_err
 }
 

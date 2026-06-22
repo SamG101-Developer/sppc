@@ -104,7 +104,7 @@ SPPC_API int c_msync(void *restrict addr, size_t const *restrict length, int fla
 SPPC_API int c_madvise(void *restrict addr, size_t const *restrict length, int advice);
 SPPC_API int c_isatty(int fd, bool *restrict out);
 
-SPPC_API int c_exists(char const *restrict path);
+SPPC_API int c_exists(char const *restrict path, bool *restrict out);
 SPPC_API int c_is_file(char const *restrict path, bool *restrict out);
 SPPC_API int c_is_dir(char const *restrict path, bool *restrict out);
 SPPC_API int c_is_symlink(char const *restrict path, bool *restrict out);
