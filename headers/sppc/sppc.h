@@ -17,6 +17,7 @@
 #include <sys/uio.h>
 
 typedef int64_t ssize_t;
+typedef int64_t off_t;
 
 #ifndef DEBUG_BUILD // Set from cmake.
 #define DEBUG_BUILD 0
@@ -70,11 +71,11 @@ SPPC_API int c_pthread_spin_trylock(uint64_t const *restrict spinlock);
 SPPC_API int c_pthread_spin_unlock(uint64_t const *restrict spinlock);
 SPPC_API int c_pthread_spin_destroy(uint64_t const *restrict spinlock);
 
-SPPC_API int c_read(void *restrict buffer, size_t size, size_t count, int fd, ssize_t *restrict out_n);
-SPPC_API int c_write(void const *restrict buffer, size_t size, size_t count, int fd, ssize_t *restrict out_n);
-SPPC_API int c_stdin_read(void *restrict buffer, size_t size, size_t count, ssize_t *restrict out_n);
-SPPC_API int c_stdout_write(void const *restrict buffer, size_t size, size_t count, ssize_t *restrict out_n);
-SPPC_API int c_stderr_write(void const *restrict buffer, size_t size, size_t count, ssize_t *restrict out_n);
+SPPC_API int c_read(char *restrict buffer, size_t size, size_t count, int fd, ssize_t *restrict out_n);
+SPPC_API int c_write(char const *restrict buffer, size_t size, size_t count, int fd, ssize_t *restrict out_n);
+SPPC_API int c_stdin_read(char *restrict buffer, size_t size, size_t count, ssize_t *restrict out_n);
+SPPC_API int c_stdout_write(char const *restrict buffer, size_t size, size_t count, ssize_t *restrict out_n);
+SPPC_API int c_stderr_write(char const *restrict buffer, size_t size, size_t count, ssize_t *restrict out_n);
 SPPC_API int c_open(char const *restrict path, int flags, mode_t mode, int *restrict out_fd);
 SPPC_API int c_close(int fd);
 SPPC_API int c_flush(int fd);
