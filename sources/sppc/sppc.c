@@ -290,19 +290,19 @@ int c_pthread_spin_destroy(uint64_t const *restrict spinlock) {
     _return_normalized_pthread_err
 }
 
-int c_read(void *restrict buffer, const size_t size, const size_t count, const int fd, ssize_t *restrict out_n) {
+int c_read(char *restrict buffer, const size_t size, const size_t count, const int fd, ssize_t *restrict out_n) {
     _extract_err read(fd, buffer, size * count);
     *out_n = err < 0 ? -1 : err;
     _return_normalized_err
 }
 
-int c_write(void const *restrict buffer, const size_t size, const size_t count, const int fd, ssize_t *restrict out_n) {
+int c_write(char const *restrict buffer, const size_t size, const size_t count, const int fd, ssize_t *restrict out_n) {
     _extract_err write(fd, buffer, size * count);
     *out_n = err < 0 ? -1 : err;
     _return_normalized_err
 }
 
-int c_stdin_read(void *restrict buffer, const size_t size, const size_t count, ssize_t *restrict out_n) {
+int c_stdin_read(char *restrict buffer, const size_t size, const size_t count, ssize_t *restrict out_n) {
     ssize_t err = 0;
     if (pthread_mutex_lock(&_stdin_mutex) != 0) { return errno; }
     if (c_read(buffer, size, count, STDIN_FILENO, &err) != 0) { return errno; }
@@ -311,7 +311,7 @@ int c_stdin_read(void *restrict buffer, const size_t size, const size_t count, s
     _return_normalized_err
 }
 
-int c_stdout_write(void const *restrict buffer, const size_t size, const size_t count, ssize_t *restrict out_n) {
+int c_stdout_write(char const *restrict buffer, const size_t size, const size_t count, ssize_t *restrict out_n) {
     ssize_t err = 0;
     if (pthread_mutex_lock(&_stdout_mutex) != 0) { return errno; }
     if (c_write(buffer, size, count, STDOUT_FILENO, &err) != 0) { return errno; }
@@ -320,7 +320,7 @@ int c_stdout_write(void const *restrict buffer, const size_t size, const size_t 
     _return_normalized_err
 }
 
-int c_stderr_write(void const *restrict buffer, const size_t size, const size_t count, ssize_t *restrict out_n) {
+int c_stderr_write(char const *restrict buffer, const size_t size, const size_t count, ssize_t *restrict out_n) {
     ssize_t err = 0;
     if (pthread_mutex_lock(&_stderr_mutex) != 0) { return errno; }
     if (c_write(buffer, size, count, STDERR_FILENO, &err) != 0) { return errno; }
