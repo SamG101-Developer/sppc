@@ -109,7 +109,7 @@ SPPC_API int c_exists(char const *restrict path, bool *restrict out);
 SPPC_API int c_is_file(char const *restrict path, bool *restrict out);
 SPPC_API int c_is_dir(char const *restrict path, bool *restrict out);
 SPPC_API int c_is_symlink(char const *restrict path, bool *restrict out);
-SPPC_API int c_filesize(char const *restrict path, uint64_t *restrict out);
+SPPC_API int c_filesize(char const *restrict path, off_t *restrict out);
 SPPC_API int c_remove(char const *restrict path);
 SPPC_API int c_rename(char const *restrict old_path, char const *restrict new_path);
 SPPC_API int c_mkdir(char const *restrict path, mode_t mode);

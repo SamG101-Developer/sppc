@@ -517,7 +517,7 @@ int c_is_symlink(char const *restrict path, bool *restrict out) {
     _return_normalized_err
 }
 
-int c_filesize(char const *restrict path, uint64_t *restrict out) {
+int c_filesize(char const *restrict path, off_t *restrict out) {
     struct stat st = {};
     _extract_err lstat(path, &st);
     if (err == 0) { *out = st.st_size; }
