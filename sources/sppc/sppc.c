@@ -152,7 +152,7 @@ int c_pthread_mutex_trylock(uint64_t const *restrict mutex) {
     _return_normalized_pthread_err
 }
 
-int c_pthread_unlock(uint64_t const *restrict mutex) {
+int c_pthread_mutex_unlock(uint64_t const *restrict mutex) {
     _extract_err pthread_mutex_unlock((pthread_mutex_t*)mutex);
     _return_normalized_pthread_err
 }
@@ -162,9 +162,9 @@ int c_pthread_mutex_destroy(uint64_t const *restrict mutex) {
     _return_normalized_pthread_err
 }
 
-int c_pthread_once(void const *restrict func) {
+int c_pthread_once(void(*func)()) {
     constexpr auto flag = PTHREAD_ONCE_INIT;
-    _extract_err pthread_once((pthread_once_t*)&flag, (void(*)())func);
+    _extract_err pthread_once((pthread_once_t*)&flag, func);
     _return_normalized_pthread_err
 }
 

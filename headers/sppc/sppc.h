@@ -39,10 +39,10 @@ SPPC_API int c_pthread_mutex_init_recursive(uint64_t *restrict out);
 SPPC_API int c_pthread_mutex_lock(uint64_t const *restrict mutex);
 SPPC_API int c_pthread_mutex_timedlock(uint64_t const *restrict mutex, clockid_t clock, struct timespec const *restrict duration);
 SPPC_API int c_pthread_mutex_trylock(uint64_t const *restrict mutex);
-SPPC_API int c_pthread_unlock(uint64_t const *restrict mutex);
+SPPC_API int c_pthread_mutex_unlock(uint64_t const *restrict mutex);
 SPPC_API int c_pthread_mutex_destroy(uint64_t const *restrict mutex);
 
-SPPC_API int c_pthread_once(void const *restrict func);
+SPPC_API int c_pthread_once(void(*func)());
 
 SPPC_API int c_pthread_cond_init(uint64_t *restrict out);
 SPPC_API int c_pthread_cond_wait(uint64_t const *restrict cond, uint64_t const *restrict mutex);
