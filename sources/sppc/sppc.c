@@ -140,7 +140,7 @@ int c_pthread_mutex_lock(uint64_t const *restrict mutex) {
     _return_normalized_pthread_err
 }
 
-int c_pthread_mutex_timedlock(uint64_t const *restrict mutex, const clockid_t clock, struct timespec const *restrict duration) {
+int c_pthread_mutex_clocklock(uint64_t const *restrict mutex, const clockid_t clock, struct timespec const *restrict duration) {
     _extract_err pthread_mutex_clocklock((pthread_mutex_t*)mutex, clock, duration);
     _return_special_error(ETIMEDOUT, 1)
     _return_normalized_pthread_err
@@ -178,7 +178,7 @@ int c_pthread_cond_wait(uint64_t const *restrict cond, uint64_t const *restrict 
     _return_normalized_pthread_err
 }
 
-int c_pthread_cond_timedwait(uint64_t const *restrict cond, uint64_t const *restrict mutex, const clockid_t clock, struct timespec const *restrict duration) {
+int c_pthread_cond_clockwait(uint64_t const *restrict cond, uint64_t const *restrict mutex, const clockid_t clock, struct timespec const *restrict duration) {
     _extract_err pthread_cond_clockwait((pthread_cond_t*)cond, (pthread_mutex_t*)mutex, clock, duration);
     _return_special_error(ETIMEDOUT, 1)
     _return_normalized_pthread_err
