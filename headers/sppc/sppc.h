@@ -26,7 +26,7 @@ typedef int64_t off_t;
 SPPC_API int c_init(void);
 SPPC_API int c_cleanup(void);
 
-SPPC_API int c_pthread_create(void const *restrict start_routine, uint64_t *restrict out);
+SPPC_API int c_pthread_create(void(*start_routine)(void), uint64_t *restrict out);
 SPPC_API int c_pthread_join(uint64_t const *restrict handle);
 SPPC_API int c_pthread_detach(uint64_t const *restrict handle);
 SPPC_API int c_pthread_equal(uint64_t const *handle1, uint64_t const *handle2, uint64_t *restrict out);
@@ -42,7 +42,7 @@ SPPC_API int c_pthread_mutex_trylock(uint64_t const *restrict mutex);
 SPPC_API int c_pthread_mutex_unlock(uint64_t const *restrict mutex);
 SPPC_API int c_pthread_mutex_destroy(uint64_t const *restrict mutex);
 
-SPPC_API int c_pthread_once(void(*func)());
+SPPC_API int c_pthread_once(void(*func)(void));
 
 SPPC_API int c_pthread_cond_init(uint64_t *restrict out);
 SPPC_API int c_pthread_cond_wait(uint64_t const *restrict cond, uint64_t const *restrict mutex);

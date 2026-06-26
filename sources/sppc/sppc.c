@@ -96,7 +96,7 @@ int c_cleanup(void) {
     _return_success
 }
 
-int c_pthread_create(void const *start_routine, uint64_t *out) {
+int c_pthread_create(void(*start_routine)(void), uint64_t *out) {
     _extract_err pthread_create(out, NULL, (void*)start_routine, NULL);
     _return_normalized_pthread_err
 }
@@ -162,7 +162,7 @@ int c_pthread_mutex_destroy(uint64_t const *restrict mutex) {
     _return_normalized_pthread_err
 }
 
-int c_pthread_once(void(*func)()) {
+int c_pthread_once(void(*func)(void)) {
     constexpr auto flag = PTHREAD_ONCE_INIT;
     _extract_err pthread_once((pthread_once_t*)&flag, func);
     _return_normalized_pthread_err
