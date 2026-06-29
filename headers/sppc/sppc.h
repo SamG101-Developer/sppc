@@ -138,7 +138,7 @@ SPPC_API void c_free(void *ptr);
 
 SPPC_API int c_memcpy(void *restrict dest, void const *restrict src, size_t size, size_t dest_index, size_t src_index);
 SPPC_API int c_memmove(void *restrict dest, void const *restrict src, size_t size);
-SPPC_API int c_memset(void *dest, int value, size_t size);
+SPPC_API int c_memset(void *dest, int value, size_t size, size_t dest_index);
 SPPC_API int c_memcmp(void const *ptr1, void const *ptr2, size_t size, int *restrict out);
 SPPC_API int c_memcmpconst(void const *ptr1, void const *ptr2, size_t size, int *restrict out);
 SPPC_API int c_memmem(void const *haystack, size_t haystack_size, void const *needle, size_t needle_size, size_t *restrict out);

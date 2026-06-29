@@ -654,8 +654,8 @@ int c_memmove(void *restrict dest, void const *restrict src, const size_t size) 
     _return_normalized_err
 }
 
-int c_memset(void *dest, const int value, const size_t size) {
-    _extract_err memset(dest, value, size);
+int c_memset(void *dest, const int value, const size_t size, const size_t dest_index) {
+    _extract_err memset((char*)dest + dest_index, value, size);
     _return_normalized_err
 }
 
