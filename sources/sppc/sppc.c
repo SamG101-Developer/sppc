@@ -717,37 +717,37 @@ int c_strcasecmp(char const *str1, char const *str2, bool *restrict out) {
     _return_normalized_err
 }
 
-int c_strchr(char const *str, const char ch, int *restrict out_idx) {
+int c_strchr(char const *str, const char ch, size_t *restrict out_idx) {
     _extract_err strchr(str, ch);
     if (err != NULL) { *out_idx = (int)(err - str); }
     _return_normalized_void_err
 }
 
-int c_strrchr(char const *str, const char ch, int *restrict out_idx) {
+int c_strrchr(char const *str, const char ch, size_t *restrict out_idx) {
     _extract_err strrchr(str, ch);
     if (err != NULL) { *out_idx = (int)(err - str); }
     _return_normalized_void_err
 }
 
-int c_strstr(char const *haystack, char const *needle, int *restrict out_idx) {
+int c_strstr(char const *haystack, char const *needle, size_t *restrict out_idx) {
     _extract_err strstr(haystack, needle);
     if (err != NULL) { *out_idx = (int)(err - haystack); }
     _return_normalized_void_err
 }
 
-int c_strrstr(char const *haystack, char const *needle, int *restrict out_idx) {
+int c_strrstr(char const *haystack, char const *needle, size_t *restrict out_idx) {
     _extract_err strrstr(haystack, needle);
     if (err != NULL) { *out_idx = (int)(err - haystack); }
     _return_normalized_void_err
 }
 
-int c_strcasestr(char const *haystack, char const *needle, int *restrict out_idx) {
+int c_strcasestr(char const *haystack, char const *needle, size_t *restrict out_idx) {
     _extract_err strcasestr(haystack, needle);
     if (err != NULL) { *out_idx = (int)(err - haystack); }
     _return_normalized_void_err
 }
 
-int c_strpbrk(char const *string, char const *accept, int *restrict out_idx) {
+int c_strpbrk(char const *string, char const *accept, size_t *restrict out_idx) {
     _extract_err strpbrk(string, accept);
     if (err != NULL) { *out_idx = (int)(err - string); }
     _return_normalized_void_err

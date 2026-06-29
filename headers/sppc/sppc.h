@@ -150,12 +150,12 @@ SPPC_API int c_strcpy(char *restrict dest, char const *restrict src);
 SPPC_API int c_strcat(char *restrict dest, char const *restrict src);
 SPPC_API int c_strcmp(char const *str1, char const *str2, bool *restrict out);
 SPPC_API int c_strcasecmp(char const *str1, char const *str2, bool *restrict out);
-SPPC_API int c_strchr(char const *str, char ch, int *restrict out_idx);
-SPPC_API int c_strrchr(char const *str, char ch, int *restrict out_idx);
-SPPC_API int c_strstr(char const *haystack, char const *needle, int *restrict out_idx);
-SPPC_API int c_strrstr(char const *haystack, char const *needle, int *restrict out_idx);
-SPPC_API int c_strcasestr(char const *haystack, char const *needle, int *restrict out_idx);
-SPPC_API int c_strpbrk(char const *string, char const *accept, int *restrict out_idx);
+SPPC_API int c_strchr(char const *str, char ch, size_t *restrict out_idx);
+SPPC_API int c_strrchr(char const *str, char ch, size_t *restrict out_idx);
+SPPC_API int c_strstr(char const *haystack, char const *needle, size_t *restrict out_idx);
+SPPC_API int c_strrstr(char const *haystack, char const *needle, size_t *restrict out_idx);
+SPPC_API int c_strcasestr(char const *haystack, char const *needle, size_t *restrict out_idx);
+SPPC_API int c_strpbrk(char const *string, char const *accept, size_t *restrict out_idx);
 SPPC_API void* c_strdup(char const *str);
 
 SPPC_API int c_get_pid(pid_t *restrict out_pid);
