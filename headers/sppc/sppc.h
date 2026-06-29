@@ -136,7 +136,7 @@ SPPC_API void* c_calloc(size_t num, size_t size);
 SPPC_API void* c_realloc(void *ptr, size_t new_size);
 SPPC_API void c_free(void *ptr);
 
-SPPC_API int c_memcpy(void *restrict dest, void const *restrict src, size_t size);
+SPPC_API int c_memcpy(void *restrict dest, void const *restrict src, size_t size, size_t dest_index, size_t src_index);
 SPPC_API int c_memmove(void *restrict dest, void const *restrict src, size_t size);
 SPPC_API int c_memset(void *dest, int value, size_t size);
 SPPC_API int c_memcmp(void const *ptr1, void const *ptr2, size_t size, int *restrict out);

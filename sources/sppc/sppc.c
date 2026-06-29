@@ -96,7 +96,7 @@ int c_cleanup(void) {
     _return_success
 }
 
-int c_pthread_create(void(*start_routine)(void), uint64_t *out) {
+int c_pthread_create(void (*start_routine)(void), uint64_t *out) {
     _extract_err pthread_create(out, NULL, (void*)start_routine, NULL);
     _return_normalized_pthread_err
 }
@@ -162,7 +162,7 @@ int c_pthread_mutex_destroy(uint64_t const *restrict mutex) {
     _return_normalized_pthread_err
 }
 
-int c_pthread_once(void(*func)(void)) {
+int c_pthread_once(void (*func)(void)) {
     constexpr auto flag = PTHREAD_ONCE_INIT;
     _extract_err pthread_once((pthread_once_t*)&flag, func);
     _return_normalized_pthread_err
@@ -644,8 +644,8 @@ void c_free(void *ptr) {
     free(ptr);
 }
 
-int c_memcpy(void *restrict dest, void const *restrict src, const size_t size) {
-    _extract_err memcpy(dest, src, size);
+int c_memcpy(void *restrict dest, void const *restrict src, const size_t size, const size_t dest_index, const size_t src_index) {
+    _extract_err memcpy((char*)dest + dest_index, (char const*)src + src_index, size);
     _return_normalized_err
 }
 
