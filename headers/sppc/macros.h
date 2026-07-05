@@ -8,7 +8,7 @@
 #define _gnu_hot __attribute__((hot))
 #define _gnu_cold __attribute__((cold))
 #define _gnu_alloc_align(index) __attribute__((alloc_align(index)))
-#define _gnu_alloc_size(index) __attribute__((alloc_size(index)))
+#define _gnu_alloc_size(...) __attribute__((alloc_size(__VA_ARGS__)))
 #define _gnu_malloc __attribute__((malloc))
 #define _gnu_const __attribute__((const))
 #define _gnu_pure __attribute__((pure))
