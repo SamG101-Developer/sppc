@@ -2,7 +2,6 @@
  * Safety guarantees from S++
  *   * All "out" integers will be 0 by default.
  *   * All pointers will be non-null, initialised.
- * TODO: Change prefix from "c" to "sppc" + update symbol param in ffi
  */
 
 #pragma once
@@ -339,7 +338,7 @@ _gnu_inline _gnu_restrict_access(write_only, 1) _gnu_restrict_access(write_only,
 _sppc_api int sppc_stdin_read(char *restrict buffer, const size_t size, const size_t count, ssize_t *restrict out_n) {
     ssize_t err = 0;
     if (pthread_mutex_lock(&_stdin_mutex) != 0) { return errno; }
-    if (c_read(buffer, size, count, STDIN_FILENO, &err) != 0) { return errno; }
+    if (sppc_read(buffer, size, count, STDIN_FILENO, &err) != 0) { return errno; }
     if (pthread_mutex_unlock(&_stdin_mutex) != 0) { return errno; }
     *out_n = err < 0 ? -1 : err;
     _return_normalized_err
@@ -349,7 +348,7 @@ _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 
 _sppc_api int sppc_stdout_write(char const *restrict buffer, const size_t size, const size_t count, ssize_t *restrict out_n) {
     ssize_t err = 0;
     if (pthread_mutex_lock(&_stdout_mutex) != 0) { return errno; }
-    if (c_write(buffer, size, count, STDOUT_FILENO, &err) != 0) { return errno; }
+    if (sppc_write(buffer, size, count, STDOUT_FILENO, &err) != 0) { return errno; }
     if (pthread_mutex_unlock(&_stdout_mutex) != 0) { return errno; }
     *out_n = err < 0 ? -1 : err;
     _return_normalized_err
@@ -359,7 +358,7 @@ _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 
 _sppc_api int sppc_stderr_write(char const *restrict buffer, const size_t size, const size_t count, ssize_t *restrict out_n) {
     ssize_t err = 0;
     if (pthread_mutex_lock(&_stderr_mutex) != 0) { return errno; }
-    if (c_write(buffer, size, count, STDERR_FILENO, &err) != 0) { return errno; }
+    if (sppc_write(buffer, size, count, STDERR_FILENO, &err) != 0) { return errno; }
     if (pthread_mutex_unlock(&_stderr_mutex) != 0) { return errno; }
     *out_n = err < 0 ? -1 : err;
     _return_normalized_err
