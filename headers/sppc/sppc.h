@@ -6,7 +6,7 @@
  */
 
 #pragma once
-#ifndef _GNU_SOURCE // Required for the GNU extensions used throughout (secure_getenv, memmem, accept4, getrandom, ...).
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
 
@@ -14,7 +14,6 @@
 #pragma GCC diagnostic ignored "-Wunknown-attributes"
 
 #include <sppc/macros.h>
-#include <sppc/inner/rng.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -709,7 +708,7 @@ _sppc_api int c_chdir(char const *restrict path) {
     _return_normalized_err
 }
 
-_gnu_inline _gnu_malloc _gnu_alloc_size(1)
+_gnu_inline _gnu_hot _gnu_malloc _gnu_alloc_size(1)
 _sppc_api void* c_malloc(const size_t size) {
     _extract_err malloc(size);
     _return_pointer
@@ -721,56 +720,46 @@ _sppc_api void* c_aligned_alloc(const size_t size, const size_t alignment) {
     _return_pointer
 }
 
-_gnu_inline _gnu_malloc _gnu_alloc_size(1, 2)
+_gnu_inline _gnu_hot _gnu_malloc _gnu_alloc_size(1, 2)
 _sppc_api void* c_calloc(const size_t num, const size_t size) {
     _extract_err calloc(num, size);
     _return_pointer
 }
 
-_gnu_inline _gnu_alloc_size(2)
+_gnu_inline _gnu_hot _gnu_alloc_size(2)
 _sppc_api void* c_realloc(void *ptr, const size_t new_size) {
     _extract_err realloc(ptr, new_size);
     _return_pointer
 }
 
-_gnu_inline
+_gnu_inline _gnu_hot
 _sppc_api void c_free(void *ptr) {
     free(ptr);
 }
 
-_gnu_inline _gnu_restrict_access(write_only, 1) _gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)
+_gnu_inline _gnu_hot _gnu_restrict_access(write_only, 1) _gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)
 _sppc_api int c_memcpy(void *restrict dest, void const *restrict src, const size_t size, const size_t dest_index, const size_t src_index) {
     _extract_err memcpy((char*)dest + dest_index, (char const*)src + src_index, size);
     _return_normalized_err
 }
 
-_gnu_inline _gnu_restrict_access(write_only, 1) _gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)
+_gnu_inline _gnu_hot _gnu_restrict_access(write_only, 1) _gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)
 _sppc_api int c_memmove(void *restrict dest, void const *restrict src, const size_t size) {
     _extract_err memmove(dest, src, size);
     _return_normalized_err
 }
 
-_gnu_inline _gnu_restrict_access(write_only, 1) _gnu_nonnull(1)
+_gnu_inline _gnu_hot _gnu_restrict_access(write_only, 1) _gnu_nonnull(1)
 _sppc_api int c_memset(void *restrict dest, const int value, const size_t size, const size_t dest_index) {
     _extract_err memset((char*)dest + dest_index, value, size);
     _return_normalized_err
 }
 
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(write_only, 4) _gnu_nonnull(1, 2, 4)
+_gnu_inline _gnu_hot _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(write_only, 4) _gnu_nonnull(1, 2, 4)
 _sppc_api int c_memcmp(void const *ptr1, void const *ptr2, const size_t size, int *restrict out) {
     _extract_err memcmp(ptr1, ptr2, size);
     *out = err < 0 ? -1 : err;
     _return_normalized_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(write_only, 4) _gnu_nonnull(1, 2, 4)
-_sppc_api int c_memcmpconst(void const *ptr1, void const *ptr2, const size_t size, int *restrict out) {
-    const volatile unsigned char *a = ptr1;
-    const volatile unsigned char *b = ptr2;
-    unsigned char result = 0;
-    for (size_t i = 0; i < size; i++) { result |= a[i] ^ b[i]; }
-    *out = result;
-    return 0;
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 3) _gnu_restrict_access(write_only, 5) _gnu_nonnull(1, 3, 5)

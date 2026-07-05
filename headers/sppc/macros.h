@@ -1,24 +1,18 @@
 #pragma once
 
 #define _gnu_inline inline __attribute__((always_inline)) __attribute__((flatten))
-#define _sppc_api __attribute__((visibility("default")))
+#define _sppc_api __attribute__((visibility("default"))) __attribute__((nothrow))
 #define _gnu_noreturn __attribute__((noreturn))
-#define _gnu_nothrow __attribute__((nothrow))
 #define _gnu_restrict_access(mode, index) __attribute__((access(mode, index)))
 #define _gnu_hot __attribute__((hot))
 #define _gnu_cold __attribute__((cold))
 #define _gnu_alloc_align(index) __attribute__((alloc_align(index)))
 #define _gnu_alloc_size(...) __attribute__((alloc_size(__VA_ARGS__)))
 #define _gnu_malloc __attribute__((malloc))
-#define _gnu_const __attribute__((const))
-#define _gnu_pure __attribute__((pure))
-#define _gnu_expected_throw __attribute__((__expected_throw__))
 #define _gnu_fd_arg(index) __attribute__((fd_arg(index)))
 #define _gnu_fd_arg_read(index) __attribute__((fd_arg_read(index)))
 #define _gnu_fd_arg_write(index) __attribute__((fd_arg_write(index)))
 #define _gnu_nonnull(...) __attribute__((nonnull(__VA_ARGS__)))
-#define _gnu_returns_nonnull __attribute__((returns_nonnull))
-#define _gnu_used __attribute__((used))
 
 #define _return_normalized_err \
     return err < 0 ? errno : 0;
