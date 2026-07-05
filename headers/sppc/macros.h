@@ -1,5 +1,59 @@
 #pragma once
 
-#define SPPC_NORETURN __attribute__((__noreturn__))
+#define _gnu_inline inline __attribute__((always_inline)) __attribute__((flatten))
+#define _sppc_api __attribute__((visibility("default")))
+#define _gnu_noreturn __attribute__((noreturn))
+#define _gnu_nothrow __attribute__((nothrow))
+#define _gnu_restrict_access(mode, index) __attribute__((access(mode, index)))
+#define _gnu_hot __attribute__((hot))
+#define _gnu_cold __attribute__((cold))
+#define _gnu_alloc_align(index) __attribute__((alloc_align(index)))
+#define _gnu_alloc_size(index) __attribute__((alloc_size(index)))
+#define _gnu_malloc __attribute__((malloc))
+#define _gnu_const __attribute__((const))
+#define _gnu_pure __attribute__((pure))
+#define _gnu_expected_throw __attribute__((__expected_throw__))
+#define _gnu_fd_arg(index) __attribute__((fd_arg(index)))
+#define _gnu_fd_arg_read(index) __attribute__((fd_arg_read(index)))
+#define _gnu_fd_arg_write(index) __attribute__((fd_arg_write(index)))
+#define _gnu_nonnull(...) __attribute__((nonnull(__VA_ARGS__)))
+#define _gnu_returns_nonnull __attribute__((returns_nonnull))
+#define _gnu_used __attribute__((used))
 
-#define SPPC_API __attribute__((visibility("default")))
+#define _return_normalized_err \
+    return err < 0 ? errno : 0;
+
+#define _return_normalized_void_err \
+    return err == NULL ? errno : 0;
+
+#define _return_normalized_pthread_err \
+    return err != 0 ? errno : 0;
+
+#define _return_normalized_ptr_err \
+    return err == NULL ? errno : 0;
+
+#define _return_special_error(errno_val, return_val) \
+    if (err == errno_val) { return return_val; }
+
+#define _return_pointer \
+    return err;
+
+#define _return_success \
+    return 0;
+
+#define _extract_err \
+    const auto err =
+
+#define _socket_addr_in_construction_helper \
+    socklen_t len = storage->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+
+#define _socket_addr_out_construction_helper \
+    socklen_t len = out_storage->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+
+#define pthread_mutex_init_helper(flag)                                 \
+    ({ pthread_mutexattr_t attr;                                        \
+    pthread_mutexattr_init(&attr);                                      \
+    pthread_mutexattr_settype(&attr, (flag));                           \
+    const auto err_ = pthread_mutex_init((pthread_mutex_t*)out, &attr); \
+    pthread_mutexattr_destroy(&attr);                                   \
+    err_; })

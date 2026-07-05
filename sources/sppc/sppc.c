@@ -21,44 +21,6 @@ static pthread_mutex_t _stdin_mutex;
 static pthread_mutex_t _stdout_mutex;
 static pthread_mutex_t _stderr_mutex;
 
-#define _return_normalized_err \
-    return err < 0 ? errno : 0;
-
-#define _return_normalized_void_err \
-    return err == NULL ? errno : 0;
-
-#define _return_normalized_pthread_err \
-    return err != 0 ? errno : 0;
-
-#define _return_normalized_ptr_err \
-    return err == NULL ? errno : 0;
-
-#define _return_special_error(errno_val, return_val) \
-    if (err == errno_val) { return return_val; }
-
-#define _return_pointer \
-    return err;
-
-#define _return_success \
-    return 0;
-
-#define _extract_err \
-    const auto err =
-
-#define _socket_addr_in_construction_helper \
-    socklen_t len = storage->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
-
-#define _socket_addr_out_construction_helper \
-    socklen_t len = out_storage->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
-
-#define pthread_mutex_init_helper(flag)                                 \
-    ({ pthread_mutexattr_t attr;                                        \
-    pthread_mutexattr_init(&attr);                                      \
-    pthread_mutexattr_settype(&attr, (flag));                           \
-    const auto err_ = pthread_mutex_init((pthread_mutex_t*)out, &attr); \
-    pthread_mutexattr_destroy(&attr);                                   \
-    err_; })
-
 char* strrstr(const char *restrict haystack, const char *restrict needle) {
     if (*needle == '\0') { return (char*)haystack + strlen(haystack); }
     auto last = (char*)NULL;
@@ -94,40 +56,6 @@ int c_cleanup(void) {
     if (pthread_mutex_destroy(&_stdout_mutex) != 0) { return errno; }
     if (pthread_mutex_destroy(&_stderr_mutex) != 0) { return errno; }
     _return_success
-}
-
-int c_pthread_create(void (*start_routine)(void), uint64_t *out) {
-    _extract_err pthread_create(out, NULL, (void*)start_routine, NULL);
-    _return_normalized_pthread_err
-}
-
-int c_pthread_join(uint64_t const *restrict handle) {
-    _extract_err pthread_join((pthread_t)handle, nullptr);
-    _return_normalized_pthread_err
-}
-
-int c_pthread_detach(uint64_t const *restrict handle) {
-    _extract_err pthread_detach((pthread_t)handle);
-    _return_normalized_pthread_err
-}
-
-int c_pthread_equal(uint64_t const *handle1, uint64_t const *handle2, uint64_t *restrict out) {
-    *out = pthread_equal((pthread_t)handle1, (pthread_t)handle2) != 0;
-    _return_success
-}
-
-int c_pthread_self(uint64_t *restrict out) {
-    *out = pthread_self();
-    _return_success
-}
-
-void c_sched_yield(void) {
-    sched_yield();
-}
-
-int c_pthread_mutex_init(uint64_t *restrict out) {
-    _extract_err pthread_mutex_init_helper(DEBUG_BUILD ? PTHREAD_MUTEX_ERRORCHECK : PTHREAD_MUTEX_NORMAL);
-    _return_normalized_pthread_err
 }
 
 int c_pthread_mutex_init_recursive(uint64_t *restrict out) {
@@ -221,12 +149,12 @@ int c_pthread_rwlock_clockrdlock(uint64_t const *restrict rwlock, const clockid_
     _return_normalized_pthread_err
 }
 
-int c_pthread_rwlock_wrlock(uint64_t *restrict rwlock) {
+int c_pthread_rwlock_wrlock(uint64_t const *restrict rwlock) {
     _extract_err pthread_rwlock_wrlock((pthread_rwlock_t*)rwlock);
     _return_normalized_pthread_err
 }
 
-int c_pthread_rwlock_trywrlock(uint64_t *restrict rwlock) {
+int c_pthread_rwlock_trywrlock(uint64_t const *restrict rwlock) {
     _extract_err pthread_rwlock_trywrlock((pthread_rwlock_t*)rwlock);
     _return_special_error(EBUSY, 1)
     _return_normalized_pthread_err
@@ -654,7 +582,7 @@ int c_memmove(void *restrict dest, void const *restrict src, const size_t size) 
     _return_normalized_err
 }
 
-int c_memset(void *dest, const int value, const size_t size, const size_t dest_index) {
+int c_memset(void *restrict dest, const int value, const size_t size, const size_t dest_index) {
     _extract_err memset((char*)dest + dest_index, value, size);
     _return_normalized_err
 }
