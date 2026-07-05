@@ -1176,16 +1176,4 @@ _sppc_api int c_csprngbytes(const size_t size, char *restrict out) {
     _return_success
 }
 
-_gnu_inline _gnu_restrict_access(write_only, 1) _gnu_nonnull(1)
-_sppc_api int c_csprngu32(uint32_t *restrict out) {
-    _extract_err getrandom(out, sizeof(uint32_t), 0);
-    _return_success
-}
-
-_gnu_inline _gnu_restrict_access(write_only, 1) _gnu_nonnull(1)
-_sppc_api int c_csprngu64(uint64_t *restrict out) {
-    _extract_err getrandom(out, sizeof(uint64_t), 0);
-    _return_success
-}
-
 #pragma GCC diagnostic pop
