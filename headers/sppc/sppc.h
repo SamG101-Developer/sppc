@@ -692,9 +692,10 @@ _sppc_api int sppc_signal(const pid_t pid, const int signal) {
 }
 
 _posix_syscall(72)
-_gnu_inline
-_sppc_api int sppc_fcntl(const int fd, const int cmd, const int opt) {
+_gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(write_only, 4) _gnu_nonnull(4)
+_sppc_api int sppc_fcntl(const int fd, const int cmd, const int opt, int *out_flags) {
     _extract_err fcntl(fd, cmd, opt);
+    _sret_normalised_store(out_flags)
     _return_normalized_err
 }
 
