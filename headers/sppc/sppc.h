@@ -686,8 +686,8 @@ _sppc_api void sppc_exit(const int status) {
 
 _posix_syscall(72)
 _gnu_inline
-_sppc_api int sppc_fcntl(const int fd, const int cmd) {
-    _extract_err fcntl(fd, cmd);
+_sppc_api int sppc_fcntl(const int fd, const int cmd, const int opt) {
+    _extract_err fcntl(fd, cmd, opt);
     _return_normalized_err
 }
 
@@ -777,8 +777,8 @@ _sppc_api int sppc_unlink(char const *restrict path) {
 
 _posix_syscall(89)
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2) _gnu_nonnull(1, 2)
-_sppc_api int sppc_readlink(char const *restrict path, char *restrict buffer, size_t buffer_size) {
-    _extract_err readlink(path, buffer, 256);
+_sppc_api int sppc_readlink(char const *restrict path, char *restrict buffer, const size_t buffer_size) {
+    _extract_err readlink(path, buffer, buffer_size);
     _return_normalized_err
 }
 
@@ -1045,109 +1045,17 @@ _sppc_api void sppc_sockaddr_family(struct sockaddr_storage const *restrict stor
     *out_family = storage->ss_family;
 }
 
-// _gnu_inline _gnu_fd_arg(1)
-// _sppc_api int sppc_set_nonblocking(const int fd, const bool non_blocking) {
-//     const auto flags = fcntl(fd, F_GETFL, 0);
-//     if (flags < 0) { return -1; }
-//     _extract_err fcntl(fd, F_SETFL, non_blocking ? flags | O_NONBLOCK : flags & ~O_NONBLOCK);
-//     _return_normalized_err
-// }
-
-_gnu_inline _gnu_fd_arg(1)
-_sppc_api int sppc_set_keepalive(const int fd, const bool keepalive) {
-    _extract_err setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
+_gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(read_only, 4) _gnu_nonnull(4)
+_sppc_api int sppc_setsockopt(const int fd, const int level, const int optname, int const *restrict optval) {
+    constexpr auto optlen = (socklen_t)sizeof(optval);
+    _extract_err setsockopt(fd, level, optname, optval, optlen);
     _return_normalized_err
 }
 
-_gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(read_only, 3) _gnu_nonnull(3)
-_sppc_api int sppc_set_linger(const int fd, bool on, struct timeval const *restrict linger) {
-    const struct linger l = {.l_onoff = linger ? 1 : 0, .l_linger = linger->tv_sec};
-    _extract_err setsockopt(fd, SOL_SOCKET, SO_LINGER, &l, sizeof(l));
-    _return_normalized_err
-}
-
-_gnu_inline _gnu_fd_arg(1)
-_sppc_api int sppc_set_nodelay(const int fd, const bool nodelay) {
-    _extract_err setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
-    _return_normalized_err
-}
-
-_gnu_inline _gnu_fd_arg(1)
-_sppc_api int sppc_set_ttl(const int fd, const int ttl) {
-    _extract_err setsockopt(fd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
-    _return_normalized_err
-}
-
-_gnu_inline _gnu_fd_arg(1)
-_sppc_api int sppc_set_broadcast(const int fd, const bool broadcast) {
-    _extract_err setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &broadcast, sizeof(broadcast));
-    _return_normalized_err
-}
-
-_gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(read_only, 2) _gnu_nonnull(2)
-_sppc_api int sppc_set_recv_timeout(const int fd, struct timeval const *restrict timeout) {
-    _extract_err setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (void*)&timeout, sizeof(timeout));
-    _return_normalized_err
-}
-
-_gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(read_only, 2) _gnu_nonnull(2)
-_sppc_api int sppc_set_send_timeout(const int fd, struct timeval const *restrict timeout) {
-    _extract_err setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, (void*)&timeout, sizeof(timeout));
-    _return_normalized_err
-}
-
-_gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(write_only, 2) _gnu_nonnull(2)
-_sppc_api int sppc_get_keepalive(const int fd, bool *restrict out_keepalive) {
-    auto len = (socklen_t)sizeof(bool);
-    _extract_err getsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, out_keepalive, &len);
-    _return_normalized_err
-}
-
-_gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(write_only, 2) _gnu_restrict_access(write_only, 3) _gnu_nonnull(2, 3)
-_sppc_api int sppc_get_linger(const int fd, bool *restrict out_on, struct timeval *restrict out_linger) {
-    struct linger l = {};
-    auto len = (socklen_t)sizeof(l);
-    _extract_err getsockopt(fd, SOL_SOCKET, SO_LINGER, &l, &len);
-    if (err == 0) {
-        *out_on = l.l_onoff != 0;
-        out_linger->tv_sec = l.l_linger;
-        out_linger->tv_usec = 0;
-    }
-    _return_normalized_err
-}
-
-_gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(write_only, 2) _gnu_nonnull(2)
-_sppc_api int sppc_get_nodelay(const int fd, bool *restrict out_nodelay) {
-    auto len = (socklen_t)sizeof(bool);
-    _extract_err getsockopt(fd, IPPROTO_TCP, TCP_NODELAY, out_nodelay, &len);
-    _return_normalized_err
-}
-
-_gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(write_only, 2) _gnu_nonnull(2)
-_sppc_api int sppc_get_ttl(const int fd, int *restrict out_ttl) {
-    auto len = (socklen_t)sizeof(int);
-    _extract_err getsockopt(fd, IPPROTO_IP, IP_TTL, out_ttl, &len);
-    _return_normalized_err
-}
-
-_gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(write_only, 2) _gnu_nonnull(2)
-_sppc_api int sppc_get_broadcast(const int fd, bool *restrict out_broadcast) {
-    auto len = (socklen_t)sizeof(bool);
-    _extract_err getsockopt(fd, SOL_SOCKET, SO_BROADCAST, out_broadcast, &len);
-    _return_normalized_err
-}
-
-_gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(write_only, 2) _gnu_nonnull(2)
-_sppc_api int sppc_get_recv_timeout(const int fd, struct timeval *restrict out_timeout) {
-    auto len = (socklen_t)sizeof(int);
-    _extract_err getsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, out_timeout, &len);
-    _return_normalized_err
-}
-
-_gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(write_only, 2) _gnu_nonnull(2)
-_sppc_api int sppc_get_send_timeout(const int fd, struct timeval *restrict out_timeout) {
-    auto len = (socklen_t)sizeof(int);
-    _extract_err getsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, out_timeout, &len);
+_gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(write_only, 4) _gnu_nonnull(4)
+_sppc_api int sppc_getsockopt(const int fd, const int level, const int optname, int *restrict optval) {
+    auto optlen = (socklen_t)sizeof(optval);
+    _extract_err getsockopt(fd, level, optname, optval, &optlen);
     _return_normalized_err
 }
 
@@ -1159,7 +1067,7 @@ _sppc_api int sppc_stdin_read(char *restrict buffer, const size_t size, const si
     if (pthread_mutex_lock(&_stdin_mutex) != 0) { return errno; }
     if (sppc_read(buffer, size, count, STDIN_FILENO, &err) != 0) { return errno; }
     if (pthread_mutex_unlock(&_stdin_mutex) != 0) { return errno; }
-    *out_n = err < 0 ? -1 : err;
+    _sret_normalised_store(out_n)
     _return_normalized_err
 }
 
@@ -1169,7 +1077,7 @@ _sppc_api int sppc_stdout_write(char const *restrict buffer, const size_t size, 
     if (pthread_mutex_lock(&_stdout_mutex) != 0) { return errno; }
     if (sppc_write(buffer, size, count, STDOUT_FILENO, &err) != 0) { return errno; }
     if (pthread_mutex_unlock(&_stdout_mutex) != 0) { return errno; }
-    *out_n = err < 0 ? -1 : err;
+    _sret_normalised_store(out_n)
     _return_normalized_err
 }
 
@@ -1179,7 +1087,7 @@ _sppc_api int sppc_stderr_write(char const *restrict buffer, const size_t size, 
     if (pthread_mutex_lock(&_stderr_mutex) != 0) { return errno; }
     if (sppc_write(buffer, size, count, STDERR_FILENO, &err) != 0) { return errno; }
     if (pthread_mutex_unlock(&_stderr_mutex) != 0) { return errno; }
-    *out_n = err < 0 ? -1 : err;
+    _sret_normalised_store(out_n)
     _return_normalized_err
 }
 
