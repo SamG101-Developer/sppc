@@ -684,6 +684,13 @@ _sppc_api void sppc_exit(const int status) {
     exit(status);
 }
 
+_posix_syscall(62)
+_gnu_inline
+_sppc_api int sppc_signal(const pid_t pid, const int signal) {
+    _extract_err kill(pid, signal);
+    _return_normalized_err
+}
+
 _posix_syscall(72)
 _gnu_inline
 _sppc_api int sppc_fcntl(const int fd, const int cmd, const int opt) {
@@ -974,20 +981,6 @@ _sppc_api int sppc_setenv(char const *restrict key, char const *restrict val, co
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_nonnull(1)
 _sppc_api int sppc_unsetenv(char const *restrict key) {
     _extract_err unsetenv(key);
-    _return_normalized_err
-}
-
-_gnu_inline
-_sppc_api int sppc_signal(const pid_t pid, const int signal) {
-    _extract_err kill(pid, signal);
-    _return_normalized_err
-}
-
-_gnu_inline
-_sppc_api int sppc_is_running(const pid_t pid) {
-    _extract_err kill(pid, 0);
-    if (err == 0) { return 1; }
-    if (err == ESRCH) { return 0; }
     _return_normalized_err
 }
 
