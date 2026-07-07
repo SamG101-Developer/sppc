@@ -14,35 +14,19 @@
 #define _gnu_fd_arg_write(index) __attribute__((fd_arg_write(index)))
 #define _gnu_nonnull(...) __attribute__((nonnull(__VA_ARGS__)))
 
-#define _return_normalized_err \
-    return err < 0 ? errno : 0;
+#define _posix_syscall(rax) // SYSCALL FOR POSIX COMPLIANT SYSTEM
+#define _posix_fake_syscall(reason) // SYSCALL FOR POSIX COMPLIANT SYSTEM
 
-#define _return_normalized_void_err \
-    return err == NULL ? errno : 0;
+#define _return_normalized_err return err < 0 ? errno : 0;
+#define _return_normalized_ptr_err return err == NULL ? errno : 0;
+#define _return_normalized_pthread_err return err != 0 ? errno : 0;
+#define _return_special_error(errno_val, return_val) if (err == errno_val) { return return_val; }
+#define _return_pointer return err;
+#define _sret_normalised_store(into) *into = err < 0 ? -1 : err;
 
-#define _return_normalized_pthread_err \
-    return err != 0 ? errno : 0;
-
-#define _return_normalized_ptr_err \
-    return err == NULL ? errno : 0;
-
-#define _return_special_error(errno_val, return_val) \
-    if (err == errno_val) { return return_val; }
-
-#define _return_pointer \
-    return err;
-
-#define _return_success \
-    return 0;
-
-#define _extract_err \
-    const auto err =
-
-#define _socket_addr_in_construction_helper \
-    socklen_t len = storage->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
-
-#define _socket_addr_out_construction_helper \
-    socklen_t len = out_storage->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+#define _extract_err const auto err =
+#define _socket_addr_in_construction_helper socklen_t len = storage->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+#define _socket_addr_out_construction_helper socklen_t len = out_storage->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
 
 #define pthread_mutex_init_helper(flag)                                 \
     ({ pthread_mutexattr_t attr;                                        \
