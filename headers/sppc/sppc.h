@@ -22,6 +22,7 @@
 #include <netinet/tcp.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -692,10 +693,12 @@ _sppc_api int sppc_signal(const pid_t pid, const int signal) {
 }
 
 _posix_syscall(72)
-_gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(write_only, 4) _gnu_nonnull(4)
-_sppc_api int sppc_fcntl(const int fd, const int cmd, const int opt, int *out_flags) {
-    _extract_err fcntl(fd, cmd, opt);
-    _sret_normalised_store(out_flags)
+_gnu_fd_arg(1)
+_sppc_api int sppc_fcntl(const int fd, const int cmd, ...) {
+    va_list ap;
+    va_start(ap, cmd);
+    _extract_err fcntl(fd, cmd, va_arg(ap, void *));
+    va_end(ap);
     _return_normalized_err
 }
 
