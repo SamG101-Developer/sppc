@@ -23,15 +23,16 @@
 #define _return_special_error(errno_val, return_val) if (err == errno_val) { return return_val; }
 #define _return_pointer return err;
 #define _sret_normalised_store(into) *into = err < 0 ? -1 : err;
+#define _sret_normalised_store_ptr(into) *into = (size_t)err;
 
 #define _extract_err const auto err =
 #define _socket_addr_in_construction_helper socklen_t len = storage->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
 #define _socket_addr_out_construction_helper socklen_t len = out_storage->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
 
-#define pthread_mutex_init_helper(flag)                                 \
-    ({ pthread_mutexattr_t attr;                                        \
-    pthread_mutexattr_init(&attr);                                      \
-    pthread_mutexattr_settype(&attr, (flag));                           \
-    const auto err_ = pthread_mutex_init((pthread_mutex_t*)out, &attr); \
-    pthread_mutexattr_destroy(&attr);                                   \
-    err_; })
+#define pthread_mutex_init_helper(flag)                               \
+  ({ pthread_mutexattr_t attr;                                        \
+  pthread_mutexattr_init(&attr);                                      \
+  pthread_mutexattr_settype(&attr, (flag));                           \
+  const auto err_ = pthread_mutex_init((pthread_mutex_t*)out, &attr); \
+  pthread_mutexattr_destroy(&attr);                                   \
+  err_; })
