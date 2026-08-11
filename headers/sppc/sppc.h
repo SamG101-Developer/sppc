@@ -49,9 +49,9 @@ typedef int64_t off_t;
 #define DEBUG_BUILD 0
 #endif
 
-pthread_mutex_t _stdin_mutex;
-pthread_mutex_t _stdout_mutex;
-pthread_mutex_t _stderr_mutex;
+extern pthread_mutex_t _stdin_mutex;
+extern pthread_mutex_t _stdout_mutex;
+extern pthread_mutex_t _stderr_mutex;
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)
 char* strrstr(const char *restrict haystack, const char *restrict needle) {

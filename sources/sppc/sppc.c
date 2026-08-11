@@ -1,5 +1,9 @@
 #include <sppc/sppc.h>
 
+pthread_mutex_t _stdin_mutex;
+pthread_mutex_t _stdout_mutex;
+pthread_mutex_t _stderr_mutex;
+
 extern int sppc_init(void);
 extern int sppc_cleanup(void);
 extern int sppc_pthread_create(void (*start_routine)(void), uint64_t *restrict out);
