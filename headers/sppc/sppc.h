@@ -82,17 +82,17 @@ _sppc_api int sppc_init(void) {
   mallopt(M_MMAP_THRESHOLD, 64 * 1024); // mmap allocations above 64KB
   gt_init(); // initialize the async green thread runtime.
 
-  if (pthread_mutex_init(&_stdin_mutex, NULL) != 0) { return errno; }
-  if (pthread_mutex_init(&_stdout_mutex, NULL) != 0) { return errno; }
-  if (pthread_mutex_init(&_stderr_mutex, NULL) != 0) { return errno; }
+  _return_if_pthread_err(pthread_mutex_init(&_stdin_mutex, NULL))
+  _return_if_pthread_err(pthread_mutex_init(&_stdout_mutex, NULL))
+  _return_if_pthread_err(pthread_mutex_init(&_stderr_mutex, NULL))
   return 0;
 }
 
 _gnu_inline _gnu_cold
 _sppc_api int sppc_cleanup(void) {
-  if (pthread_mutex_destroy(&_stdin_mutex) != 0) { return errno; }
-  if (pthread_mutex_destroy(&_stdout_mutex) != 0) { return errno; }
-  if (pthread_mutex_destroy(&_stderr_mutex) != 0) { return errno; }
+  _return_if_pthread_err(pthread_mutex_destroy(&_stdin_mutex))
+  _return_if_pthread_err(pthread_mutex_destroy(&_stdout_mutex))
+  _return_if_pthread_err(pthread_mutex_destroy(&_stderr_mutex))
   return 0;
 }
 
@@ -1103,9 +1103,9 @@ _sppc_api int sppc_getsockopt(const int fd, const int level, const int optname, 
 _gnu_inline _gnu_restrict_access(write_only, 1) _gnu_restrict_access(write_only, 4) _gnu_nonnull(1, 4)
 _sppc_api int sppc_stdin_read(char *restrict buffer, const size_t size, const size_t count, ssize_t *restrict out_n) {
   ssize_t err = 0;
-  if (pthread_mutex_lock(&_stdin_mutex) != 0) { return errno; }
+  _return_if_pthread_err(pthread_mutex_lock(&_stdin_mutex))
   if (sppc_read(buffer, size, count, STDIN_FILENO, &err) != 0) { return errno; }
-  if (pthread_mutex_unlock(&_stdin_mutex) != 0) { return errno; }
+  _return_if_pthread_err(pthread_mutex_unlock(&_stdin_mutex))
   _sret_normalised_store(out_n)
   _return_normalized_err
 }
@@ -1114,9 +1114,9 @@ _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 
 _sppc_api int sppc_stdout_write(char const *restrict buffer, const size_t size, const size_t count,
   ssize_t *restrict out_n) {
   ssize_t err = 0;
-  if (pthread_mutex_lock(&_stdout_mutex) != 0) { return errno; }
+  _return_if_pthread_err(pthread_mutex_lock(&_stdout_mutex))
   if (sppc_write(buffer, size, count, STDOUT_FILENO, &err) != 0) { return errno; }
-  if (pthread_mutex_unlock(&_stdout_mutex) != 0) { return errno; }
+  _return_if_pthread_err(pthread_mutex_unlock(&_stdout_mutex))
   _sret_normalised_store(out_n)
   _return_normalized_err
 }
@@ -1125,9 +1125,9 @@ _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 
 _sppc_api int sppc_stderr_write(char const *restrict buffer, const size_t size, const size_t count,
   ssize_t *restrict out_n) {
   ssize_t err = 0;
-  if (pthread_mutex_lock(&_stderr_mutex) != 0) { return errno; }
+  _return_if_pthread_err(pthread_mutex_lock(&_stderr_mutex))
   if (sppc_write(buffer, size, count, STDERR_FILENO, &err) != 0) { return errno; }
-  if (pthread_mutex_unlock(&_stderr_mutex) != 0) { return errno; }
+  _return_if_pthread_err(pthread_mutex_unlock(&_stderr_mutex))
   _sret_normalised_store(out_n)
   _return_normalized_err
 }

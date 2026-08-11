@@ -20,7 +20,8 @@
 
 #define _return_normalized_err return err < 0 ? errno : 0;
 #define _return_normalized_ptr_err return err == NULL ? errno : 0;
-#define _return_normalized_pthread_err return err != 0 ? errno : 0;
+#define _return_normalized_pthread_err return err;
+#define _return_if_pthread_err(call) { const auto err_ = (call); if (err_ != 0) { return err_; } }
 #define _return_special_error(errno_val, return_val) if (err == errno_val) { return return_val; }
 #define _return_pointer return err;
 #define _sret_normalised_store(into) *into = err < 0 ? -1 : err;
