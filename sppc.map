@@ -1,0 +1,14 @@
+/*
+ * Export only the public sppc_* API. Everything else -- the green-thread
+ * runtime (gt_switch), the stdio mutexes, and any future internal helper --
+ * is bound locally and invisible to dlsym/nm -gD.
+ *
+ * Anonymous version node on purpose: symbols stay unversioned, so the FFI can
+ * dlsym("sppc_init") rather than dlsym("sppc_init@@SPPC_1.0").
+ */
+{
+  global:
+    sppc_*;
+  local:
+    *;
+};

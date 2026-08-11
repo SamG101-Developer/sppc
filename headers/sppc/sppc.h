@@ -723,7 +723,7 @@ _sppc_api int sppc_signal(const pid_t pid, const int signal) {
 }
 
 _posix_syscall(72)
-_gnu_inline _gnu_fd_arg(1)
+_gnu_inline_va _gnu_fd_arg(1)
 _sppc_api int sppc_fcntl(const int fd, const int cmd, ...) {
   va_list ap;
   va_start(ap, cmd);
@@ -1134,7 +1134,7 @@ _sppc_api int sppc_stderr_write(char const *restrict buffer, const size_t size, 
 
 // ==================== ASYNC ====================
 
-_gnu_inline
+_gnu_inline_va
 _gnu_restrict_access(write_only, 1) _gnu_nonnull(1)
 _sppc_api int sppc_async(size_t *handle, void*(*routine)(size_t, uintptr_t const *), const size_t argc, ...) {
   if (argc > GT_MAX_ARGS) { return E2BIG; }
