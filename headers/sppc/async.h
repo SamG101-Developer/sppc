@@ -156,7 +156,13 @@ gt_task* gt_spawn(gt_entry_fn fn) {
 
   auto sp = (uint64_t*)((char*)t->stack + STACK_SIZE);
   sp = (uint64_t*)((uintptr_t)sp & ~0xFULL);
-  *--sp = (uint64_t)gt_task_entry;
+
+  // The entry address must sit on a 16-byte boundary, not just below one:
+  // gt_switch reaches the task via `ret`, which pops 8 bytes, and the SysV
+  // ABI wants rsp % 16 == 8 at a function's first instruction. Landing on
+  // 0 instead breaks every aligned SSE access in the task and its callees.
+  sp -= 2;
+  *sp = (uint64_t)gt_task_entry;
 
   t->ctx.rsp = (uint64_t)sp;
   gt_enqueue(t);
