@@ -20,3 +20,9 @@ target_link_options(${PROJECT_NAME} PRIVATE
   "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/sppc.map")
 set_target_properties(${PROJECT_NAME} PROPERTIES
   LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/sppc.map)
+
+option(SPPC_BUILD_TESTS "Build the sppc regression tests" ON)
+if (SPPC_BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests)
+endif()
