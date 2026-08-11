@@ -4,6 +4,23 @@ pthread_mutex_t _stdin_mutex;
 pthread_mutex_t _stdout_mutex;
 pthread_mutex_t _stderr_mutex;
 
+gt_task gt_task_pool[MAX_TASKS];
+int gt_task_free = 0;
+gt_task *gt_ready_head = NULL;
+gt_task *gt_ready_tail = NULL;
+gt_task *gt_current = NULL;
+gt_ctx gt_main_ctx;
+
+extern void gt_enqueue(gt_task *t);
+extern gt_task* gt_dequeue(void);
+extern void* gt_alloc_stack(void);
+extern void gt_free_stack(void *p);
+extern void gt_task_entry(void);
+extern void gt_init(void);
+extern gt_task* gt_spawn(gt_entry_fn fn);
+extern void gt_yield(void);
+extern void* gt_await(gt_task *task);
+
 extern int sppc_init(void);
 extern int sppc_cleanup(void);
 extern int sppc_pthread_create(void (*start_routine)(void), uint64_t *restrict out);
@@ -51,7 +68,14 @@ extern void* sppc_aligned_alloc(const size_t size, const size_t alignment);
 extern void* sppc_calloc(const size_t num, const size_t size);
 extern void* sppc_realloc(void *ptr, const size_t new_size);
 extern void sppc_free(void *ptr);
-extern int sppc_memcpy(void *restrict dest, void const *restrict src, const size_t size, const size_t dest_index,
+extern int sppc_memcpy(void *restrict dest, void const *restrict src, const
+
+
+
+
+
+
+size_t size, const size_t dest_index,
   const size_t src_index);
 extern int sppc_memmove(void *restrict dest, void const *restrict src, const size_t size);
 extern int sppc_memset(void *restrict dest, const int value, const size_t size, const size_t dest_index);

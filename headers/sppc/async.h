@@ -1,9 +1,9 @@
 #pragma once
-#include <unistd.h>
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
 
+#include <unistd.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,43 +37,48 @@ struct gt_task {
   uintptr_t argv[GT_MAX_ARGS];
 };
 
-static gt_task task_pool[MAX_TASKS];
-static auto task_free = 0;
-static gt_task *ready_head = NULL;
-static gt_task *ready_tail = NULL;
-static gt_task *current = NULL;
-static gt_ctx main_ctx;
+// Runtime state is defined once in sources/sppc/sppc.c. It
+// must not be static here as every TU including this header
+// would otherwise get a private scheduler (and a private
+// task_pool), so tasks spawned in one TU would be invisible
+// to another.
+extern gt_task gt_task_pool[MAX_TASKS];
+extern int gt_task_free;
+extern gt_task *gt_ready_head;
+extern gt_task *gt_ready_tail;
+extern gt_task *gt_current;
+extern gt_ctx gt_main_ctx;
 
 extern void gt_switch(gt_ctx *old, gt_ctx *new);
 
 _gnu_inline _gnu_hot _gnu_nonnull(1)
-static void enqueue(gt_task *t) {
+void gt_enqueue(gt_task *t) {
   // Set the next task of the new one to nullptr. Then, update
   // the current tail's next task to this one, or set the head
   // task to this one should the queue be empty. Mark this task
   // as the new tail.
   t->next = NULL;
-  if (ready_tail) ready_tail->next = t;
-  else ready_head = t;
-  ready_tail = t;
+  if (gt_ready_tail) gt_ready_tail->next = t;
+  else gt_ready_head = t;
+  gt_ready_tail = t;
 }
 
 _gnu_inline _gnu_hot
-static gt_task* dequeue(void) {
+gt_task* gt_dequeue(void) {
   // Get the task from the head of the task queue. Update the
   // head of the queue to the task after the dequeued one, and
   // set the next task of the dequeued one to nullptr (fully
   // detached from the queue).
-  const auto t = ready_head;
+  const auto t = gt_ready_head;
   if (!t) return NULL;
-  ready_head = t->next;
-  if (!ready_head) ready_tail = NULL;
+  gt_ready_head = t->next;
+  if (!gt_ready_head) gt_ready_tail = NULL;
   t->next = NULL;
   return t;
 }
 
 _gnu_inline _gnu_hot
-static void* alloc_stack(void) {
+void* gt_alloc_stack(void) {
   // Allocate a stack for the context of the async call using
   // stack size and guard size, and then align it against the
   // pagesize.
@@ -98,7 +103,7 @@ static void* alloc_stack(void) {
 }
 
 _gnu_inline _gnu_nonnull(1)
-static void free_stack(void *p) {
+void gt_free_stack(void *p) {
   // De-allocate the stack, taking the stack size and the
   // guard sizes into account when calculating pointer position
   // and size.
@@ -108,89 +113,89 @@ static void free_stack(void *p) {
   munmap(p, total);
 }
 
-_gnu_inline _gnu_hot
-static void task_entry(void) {
-  const auto self = current;
+// Address is taken in gt_spawn, so this one needs a real out-of-line copy.
+_gnu_inline_va _gnu_hot
+void gt_task_entry(void) {
+  const auto self = gt_current;
   const auto res = self->fn(self->argc, self->argv);
   self->result = res;
   self->done = 1;
 
   if (self->waiter) {
-    enqueue(self->waiter);
+    gt_enqueue(self->waiter);
     self->waiter = NULL;
   }
 
-  const auto next = dequeue();
+  const auto next = gt_dequeue();
   if (!next) {
-    gt_switch(&self->ctx, &main_ctx);
+    gt_switch(&self->ctx, &gt_main_ctx);
     abort();
   }
-  current = next;
+  gt_current = next;
   gt_switch(&self->ctx, &next->ctx);
 }
 
 // CORE
 
 _gnu_inline _gnu_cold
-static void gt_init(void) {
-  current = NULL;
-  ready_head = ready_tail = NULL;
-  task_free = 0;
+void gt_init(void) {
+  gt_current = NULL;
+  gt_ready_head = gt_ready_tail = NULL;
+  gt_task_free = 0;
 }
 
 _gnu_inline _gnu_hot _gnu_nonnull(1)
-static gt_task* gt_spawn(gt_entry_fn fn) {
-  if (task_free >= MAX_TASKS) { abort(); }
-  const auto t = &task_pool[task_free];
+gt_task* gt_spawn(gt_entry_fn fn) {
+  if (gt_task_free >= MAX_TASKS) { abort(); }
+  const auto t = &gt_task_pool[gt_task_free];
   memset(t, 0, sizeof(*t));
   t->fn = fn;
-  t->stack = alloc_stack();
+  t->stack = gt_alloc_stack();
   if (!t->stack) { return NULL; }
-  task_free++;
+  gt_task_free++;
 
   auto sp = (uint64_t*)((char*)t->stack + STACK_SIZE);
   sp = (uint64_t*)((uintptr_t)sp & ~0xFULL);
-  *--sp = (uint64_t)task_entry;
+  *--sp = (uint64_t)gt_task_entry;
 
   t->ctx.rsp = (uint64_t)sp;
-  enqueue(t);
+  gt_enqueue(t);
   return t;
 }
 
 _gnu_inline _gnu_hot
-static void gt_yield(void) {
-  const auto next = dequeue();
+void gt_yield(void) {
+  const auto next = gt_dequeue();
   if (!next) return;
-  if (current) enqueue(current);
-  const auto prev = current;
-  current = next;
+  if (gt_current) gt_enqueue(gt_current);
+  const auto prev = gt_current;
+  gt_current = next;
   if (prev) gt_switch(&prev->ctx, &next->ctx);
-  else gt_switch(&main_ctx, &next->ctx);
+  else gt_switch(&gt_main_ctx, &next->ctx);
 }
 
 _gnu_inline _gnu_hot _gnu_nonnull(1)
-static void* gt_await(gt_task *task) {
+void* gt_await(gt_task *task) {
   if (task->dead) { return task->result; }
   if (!task->done) {
-    if (current) task->waiter = current;
+    if (gt_current) task->waiter = gt_current;
     else {
       while (!task->done) gt_yield();
       goto done;
     }
-    const auto next = dequeue();
+    const auto next = gt_dequeue();
     if (!next) {
       perror("[sppc] [CRITICAL] gt deadlock");
       abort();
     }
 
-    const auto prev = current;
-    current = next;
+    const auto prev = gt_current;
+    gt_current = next;
     gt_switch(&prev->ctx, &next->ctx);
   }
 done:
   const auto res = task->result;
-  free_stack(task->stack);
+  gt_free_stack(task->stack);
   task->dead = 1;
   return res;
 }
-
