@@ -1006,11 +1006,18 @@ _sppc_api void* sppc_strdup(char const *str) {
   _return_pointer
 }
 
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2) _gnu_nonnull(1, 2)
-_sppc_api int sppc_getenv(char const *restrict key, char *restrict out) {
+_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2, 3) _gnu_nonnull(1, 2)
+_sppc_api int sppc_getenv(char const *restrict key, char *restrict out, const size_t size) {
+  // Copies the whole value, not just its first byte, and needs `size` to do
+  // that safely. Truncation is reported rather than returned silently.
+  if (size == 0) { return ERANGE; }
   _extract_err secure_getenv(key);
-  *out = err != NULL ? *err : '\0';
-  _return_normalized_ptr_err
+  if (err == NULL) { *out = '\0'; return ENOENT; }
+
+  const auto len = strlen(err);
+  if (len >= size) { *out = '\0'; return ERANGE; }
+  memcpy(out, err, len + 1);
+  return 0;
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)

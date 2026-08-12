@@ -4,7 +4,9 @@
 #define _gnu_inline_va inline __attribute__((flatten))
 #define _sppc_api __attribute__((visibility("default"))) __attribute__((nothrow))
 #define _gnu_noreturn __attribute__((noreturn))
-#define _gnu_restrict_access(mode, index) __attribute__((access(mode, index)))
+// Variadic so a buffer can name the parameter holding its size:
+// _gnu_restrict_access(write_only, 2, 3) == access(write_only, 2, 3).
+#define _gnu_restrict_access(mode, ...) __attribute__((access(mode, __VA_ARGS__)))
 #define _gnu_hot __attribute__((hot))
 #define _gnu_cold __attribute__((cold))
 #define _gnu_alloc_align(index) __attribute__((alloc_align(index)))

@@ -169,7 +169,7 @@ extern int sppc_strrstr(char const *haystack, char const *needle, size_t *restri
 extern int sppc_strcasestr(char const *haystack, char const *needle, size_t *restrict out_idx);
 extern int sppc_strpbrk(char const *string, char const *accept, size_t *restrict out_idx);
 extern void* sppc_strdup(char const *str);
-extern int sppc_getenv(char const *restrict key, char *restrict out);
+extern int sppc_getenv(char const *restrict key, char *restrict out, const size_t size);
 extern int sppc_setenv(char const *restrict key, char const *restrict val, const bool overwrite);
 extern int sppc_unsetenv(char const *restrict key);
 extern void sppc_halt(const int status);
