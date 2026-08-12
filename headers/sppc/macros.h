@@ -1,6 +1,8 @@
 #pragma once
 
 #define _gnu_inline inline __attribute__((always_inline)) __attribute__((flatten))
+// always_inline is an error on variadic functions, and cannot serve a
+// function whose address is taken; both need a real out-of-line copy.
 #define _gnu_inline_va inline __attribute__((flatten))
 #define _sppc_api __attribute__((visibility("default"))) __attribute__((nothrow))
 #define _gnu_noreturn __attribute__((noreturn))

@@ -98,9 +98,19 @@ _sppc_api int sppc_cleanup(void) {
 
 // ==================== THREADING ====================
 
-_gnu_inline _gnu_restrict_access(write_only, 2)
+// pthread_create wants void*(*)(void*). Casting a void(*)(void) to that and
+// calling through it is undefined; the call goes through this trampoline
+// instead, leaving only the function-pointer/void* conversion POSIX requires
+// to work. Underscore-prefixed so the version script keeps it internal.
+_gnu_inline_va _gnu_nonnull(1)
+void* _sppc_thread_entry(void *start_routine) {
+  ((void (*)(void))start_routine)();
+  return NULL;
+}
+
+_gnu_inline _gnu_restrict_access(write_only, 2) _gnu_nonnull(1, 2)
 _sppc_api int sppc_pthread_create(void (*start_routine)(void), uint64_t *restrict out) {
-  _extract_err pthread_create((pthread_t*)out, NULL, (void*)start_routine, NULL);
+  _extract_err pthread_create((pthread_t*)out, NULL, _sppc_thread_entry, (void*)start_routine);
   _return_normalized_pthread_err
 }
 

@@ -24,6 +24,8 @@ extern gt_task* gt_spawn(gt_entry_fn fn);
 extern void gt_yield(void);
 extern void* gt_await(gt_task *task);
 
+extern void* _sppc_thread_entry(void *start_routine);
+
 extern int sppc_init(void);
 extern int sppc_cleanup(void);
 extern int sppc_pthread_create(void (*start_routine)(void), uint64_t *restrict out);
