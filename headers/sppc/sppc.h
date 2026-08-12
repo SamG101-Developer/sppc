@@ -171,10 +171,19 @@ _sppc_api int sppc_pthread_mutex_destroy(uint64_t const *restrict mutex) {
   _return_normalized_pthread_err
 }
 
-_gnu_inline
-_sppc_api int sppc_pthread_once(void (*func)(void)) {
-  constexpr auto flag = PTHREAD_ONCE_INIT;
-  _extract_err pthread_once((pthread_once_t*)&flag, func);
+_gnu_inline _gnu_restrict_access(write_only, 1) _gnu_nonnull(1)
+_sppc_api int sppc_pthread_once_init(uint64_t *restrict out) {
+  *out = 0; // clear the whole handle, not just the once-control inside it.
+  *(pthread_once_t*)out = (pthread_once_t)PTHREAD_ONCE_INIT;
+  return 0;
+}
+
+// The once-control has to outlive the call, so it is a caller-owned handle
+// like the other sync objects. It used to be a function-local constexpr,
+// which meant a fresh control every call and so func ran every time.
+_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_nonnull(1, 2)
+_sppc_api int sppc_pthread_once(uint64_t const *restrict once, void (*func)(void)) {
+  _extract_err pthread_once((pthread_once_t*)once, func);
   _return_normalized_pthread_err
 }
 

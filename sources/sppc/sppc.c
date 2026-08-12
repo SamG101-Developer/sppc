@@ -36,7 +36,8 @@ extern int sppc_pthread_mutex_clocklock(uint64_t const *restrict mutex, const cl
 extern int sppc_pthread_mutex_trylock(uint64_t const *restrict mutex);
 extern int sppc_pthread_mutex_unlock(uint64_t const *restrict mutex);
 extern int sppc_pthread_mutex_destroy(uint64_t const *restrict mutex);
-extern int sppc_pthread_once(void (*func)(void));
+extern int sppc_pthread_once_init(uint64_t *restrict out);
+extern int sppc_pthread_once(uint64_t const *restrict once, void (*func)(void));
 extern int sppc_pthread_cond_init(uint64_t *restrict out);
 extern int sppc_pthread_cond_wait(uint64_t const *restrict cond, uint64_t const *restrict mutex);
 extern int sppc_pthread_cond_clockwait(uint64_t const *restrict cond, uint64_t const *restrict mutex,

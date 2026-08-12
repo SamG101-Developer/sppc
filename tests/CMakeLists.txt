@@ -29,6 +29,7 @@ sppc_add_test(test_gt_stack       test_gt_stack.c)
 sppc_add_test(test_sockaddr       test_sockaddr.c)
 sppc_add_test(test_mmap           test_mmap.c)
 sppc_add_test(test_env            test_env.c)
+sppc_add_test(test_once           test_once.c)
 sppc_add_test(test_async          test_async.c test_async_tu2.c)
 
 add_test(NAME test_exports
