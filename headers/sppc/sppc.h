@@ -389,8 +389,8 @@ _gnu_inline _gnu_hot _gnu_restrict_access(read_only, 1) _gnu_restrict_access(rea
 _gnu_restrict_access(write_only, 4) _gnu_nonnull(1, 2, 4)
 _sppc_api int sppc_memcmp(void const *ptr1, void const *ptr2, const size_t size, int *restrict out) {
   _extract_err memcmp(ptr1, ptr2, size);
-  _sret_normalised_store(out)
-  _return_normalized_err
+  _sret_sign_store(out)
+  return 0; // memcmp cannot fail; a negative result is an ordering, not an error.
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 3) _gnu_restrict_access(write_only, 5)
@@ -774,7 +774,7 @@ _posix_syscall(79)
 _gnu_inline _gnu_restrict_access(write_only, 1) _gnu_nonnull(1)
 _sppc_api int sppc_getcwd(char *restrict buffer, const size_t size) {
   _extract_err getcwd(buffer, size);
-  _return_normalized_err
+  _return_normalized_ptr_err
 }
 
 _posix_syscall(80)
@@ -885,7 +885,7 @@ _posix_syscall(230)
 _gnu_inline _gnu_restrict_access(read_only, 3) _gnu_nonnull(3)
 _sppc_api int sppc_clock_nanosleep(const clockid_t clock, const int flags, struct timespec const *restrict duration) {
   _extract_err clock_nanosleep(clock, flags, duration, NULL);
-  _return_normalized_err
+  _return_normalized_pthread_err
 }
 
 _posix_syscall(280)
@@ -907,7 +907,7 @@ _sppc_api int sppc_getrandom(const size_t size, char *restrict out) {
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2) _gnu_nonnull(1, 2)
 _sppc_api int sppc_realpath(char const *restrict path, char *restrict buffer) {
   _extract_err realpath(path, buffer);
-  _return_normalized_err
+  _return_normalized_ptr_err
 }
 
 _gnu_inline _gnu_restrict_access(read_write, 1) _gnu_restrict_access(write_only, 2) _gnu_nonnull(1, 2)
@@ -920,7 +920,7 @@ _sppc_api int sppc_mktemp(char *restrict path, int *restrict out_fd) {
 _gnu_inline _gnu_restrict_access(read_write, 1) _gnu_nonnull(1)
 _sppc_api int sppc_mktemp_dir(char *restrict path) {
   _extract_err mkdtemp(path);
-  _return_normalized_err
+  _return_normalized_ptr_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2) _gnu_nonnull(1, 2)
@@ -944,7 +944,7 @@ _sppc_api int sppc_strcpy(char *restrict dest, char const *restrict src) {
 _gnu_inline _gnu_restrict_access(read_write, 1) _gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)
 _sppc_api int sppc_strcat(char *restrict dest, char const *restrict src) {
   _extract_err strcat(dest, src);
-  _return_normalized_err
+  _return_normalized_ptr_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(write_only, 3)
@@ -952,7 +952,7 @@ _gnu_nonnull(1, 2, 3)
 _sppc_api int sppc_strcmp(char const *str1, char const *str2, bool *restrict out) {
   _extract_err strcmp(str1, str2);
   *out = err == 0 ? true : false;
-  _return_normalized_err
+  return 0; // an ordering result, not an error.
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(write_only, 3)
@@ -960,7 +960,7 @@ _gnu_nonnull(1, 2, 3)
 _sppc_api int sppc_strcasecmp(char const *str1, char const *str2, bool *restrict out) {
   _extract_err strcasecmp(str1, str2);
   *out = err == 0 ? true : false;
-  _return_normalized_err
+  return 0; // an ordering result, not an error.
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 3) _gnu_nonnull(1, 3)

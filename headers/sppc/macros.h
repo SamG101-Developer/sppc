@@ -35,6 +35,8 @@
 #define _return_special_error(errno_val, return_val) if (err == errno_val) { return return_val; }
 #define _return_pointer return err;
 #define _sret_normalised_store(into) *into = err < 0 ? -1 : err;
+// Comparison result, not an error: memcmp/strcmp return an unbounded sign.
+#define _sret_sign_store(into) *into = err < 0 ? -1 : err > 0 ? 1 : 0;
 #define _sret_normalised_store_ptr(into) *into = (size_t)err;
 
 #define _extract_err const auto err =
