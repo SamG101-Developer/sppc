@@ -12,9 +12,6 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
   _FILE_OFFSET_BITS=64
   DEBUG_BUILD=$<IF:$<CONFIG:Debug>,1,0>)
 
-# Only sppc_* leaves the shared library. The version script is authoritative
-# (it also covers gt_switch, which comes from assembly); -fvisibility=hidden
-# just lets the compiler skip PLT indirection for internal calls.
 target_compile_options(${PROJECT_NAME} PRIVATE -fvisibility=hidden)
 target_link_options(${PROJECT_NAME} PRIVATE
   "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/sppc.map")

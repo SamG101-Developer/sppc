@@ -23,7 +23,7 @@ typedef struct {
   uint64_t rsp, rbp, rbx, r12, r13, r14, r15;
 } gt_ctx;
 
-typedef void *(*gt_entry_fn)(size_t argc, uintptr_t const *argv);
+typedef void*(*gt_entry_fn)(size_t argc, uintptr_t const *argv);
 
 struct gt_task {
   gt_ctx ctx;
@@ -39,20 +39,6 @@ struct gt_task {
   uint32_t generation;
 };
 
-// Runtime state is defined once in sources/sppc/sppc.c. It must not be static
-// here as every TU including this header would otherwise get a private
-// scheduler, so tasks spawned in one TU would be invisible to another.
-//
-// It is thread-local: pthreads are the OS-level threading primitive and each
-// one runs its own `go` scheduler. That makes the runtime thread-safe by
-// construction rather than by locking -- there is no shared state to race on.
-// A task is therefore spawned and awaited on the same thread, which S++
-// enforces by making the Future type non-thread-sharable.
-//
-// The pool is a pointer, mapped on first use, not a thread-local array: in a
-// dlopen'd library TLS is dynamic, and glibc zeroes the whole block when a
-// thread first touches it, so a 15MB array would cost every thread 15MB
-// resident. Mapping it keeps that demand-faulted.
 extern _Thread_local gt_task *gt_task_pool;
 extern _Thread_local int gt_task_free;
 extern _Thread_local gt_task *gt_ready_head;
@@ -84,7 +70,7 @@ gt_task* gt_pool(void) {
   pthread_once(&gt_pool_key_once, gt_pool_key_init);
 
   const auto p = mmap(NULL, GT_POOL_BYTES, PROT_READ | PROT_WRITE,
-    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (p == MAP_FAILED) { return NULL; }
 
   gt_task_pool = p;
@@ -192,17 +178,17 @@ void gt_init(void) {
   gt_task_free = 0;
 }
 
-// A handle is the slot index paired with that slot's generation. Slots are
-// recycled, so a bare pointer would let a stale handle address a task that
-// has since been reused; the generation makes that detectable. Generations
-// start at 1, so a valid handle is never 0.
 _gnu_inline _gnu_hot _gnu_nonnull(1)
 size_t gt_handle(gt_task const *t) {
+  // A handle is the slot index paired with that slot's generation. Slots are
+  // recycled, so a bare pointer would let a stale handle address a task that
+  // has since been reused; the generation makes that detectable. Generations
+  // start at 1, so a valid handle is never 0.
   return ((size_t)(t - gt_task_pool) << 32) | t->generation;
 }
 
 _gnu_inline _gnu_hot
-gt_task* gt_resolve(size_t handle) {
+gt_task* gt_resolve(const size_t handle) {
   const auto index = handle >> 32;
   const auto generation = (uint32_t)handle;
   if (generation == 0 || index >= MAX_TASKS || gt_task_pool == NULL) { return NULL; }
