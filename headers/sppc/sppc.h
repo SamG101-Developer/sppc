@@ -610,9 +610,13 @@ _sppc_api void sppc_get_pid(pid_t *restrict out_pid) {
 }
 
 _posix_syscall(40)
-_gnu_inline
-_sppc_api int sppc_sendfile(const int from_fd, const int to_fd, const off_t *offset, const size_t count) {
-  _extract_err sendfile(to_fd, from_fd, (off_t*)offset, count);
+_gnu_inline _gnu_fd_arg_read(1) _gnu_fd_arg_write(2) _gnu_restrict_access(write_only, 5) _gnu_nonnull(5)
+_sppc_api int sppc_sendfile(const int from_fd, const int to_fd, off_t *offset, const size_t count,
+  ssize_t *restrict out_n) {
+  // A partial transfer is normal, so the count has to reach the caller.
+  // offset is updated by the kernel, hence not const.
+  _extract_err sendfile(to_fd, from_fd, offset, count);
+  _sret_normalised_store(out_n)
   _return_normalized_err
 }
 
@@ -829,8 +833,14 @@ _sppc_api int sppc_unlink(char const *restrict path) {
 _posix_syscall(89)
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2) _gnu_nonnull(1, 2)
 _sppc_api int sppc_readlink(char const *restrict path, char *restrict buffer, const size_t buffer_size) {
+  // readlink neither terminates nor reports truncation, and its return value
+  // is the only record of the length, so both have to be handled here.
+  if (buffer_size == 0) { return ERANGE; }
   _extract_err readlink(path, buffer, buffer_size);
-  _return_normalized_err
+  if (err < 0) { return errno; }
+  if ((size_t)err == buffer_size) { *buffer = '\0'; return ERANGE; } // no room to terminate
+  buffer[err] = '\0';
+  return 0;
 }
 
 _posix_syscall(90)
@@ -898,8 +908,19 @@ _sppc_api int sppc_utimensat(char const *restrict path, const int flags) {
 _posix_syscall(318)
 _gnu_inline _gnu_restrict_access(write_only, 2) _gnu_nonnull(2)
 _sppc_api int sppc_getrandom(const size_t size, char *restrict out) {
-  _extract_err getrandom(out, size, 0);
-  _return_normalized_err
+  // getrandom may return fewer bytes than asked for. Discarding that count
+  // left the tail of the buffer unfilled while reporting success, so keep
+  // going until the whole buffer is random.
+  size_t filled = 0;
+  while (filled < size) {
+    const auto n = getrandom(out + filled, size - filled, 0);
+    if (n < 0) {
+      if (errno == EINTR) { continue; }
+      return errno;
+    }
+    filled += (size_t)n;
+  }
+  return 0;
 }
 
 // ==================== STDLIB ====================
@@ -929,9 +950,12 @@ _sppc_api int sppc_statvfs(char const *restrict path, struct statvfs *restrict o
   _return_normalized_err
 }
 
-_gnu_inline _gnu_fd_arg_read(1) _gnu_fd_arg_write(2)
-_sppc_api int sppc_copyfile(const int fd_in, const int fd_out, const size_t len, const int flags) {
+_gnu_inline _gnu_fd_arg_read(1) _gnu_fd_arg_write(2) _gnu_restrict_access(write_only, 5) _gnu_nonnull(5)
+_sppc_api int sppc_copyfile(const int fd_in, const int fd_out, const size_t len, const int flags,
+  ssize_t *restrict out_n) {
+  // A partial copy is normal, so the count has to reach the caller.
   _extract_err copy_file_range(fd_in, NULL, fd_out, NULL, len, flags);
+  _sret_normalised_store(out_n)
   _return_normalized_err
 }
 
@@ -1103,14 +1127,14 @@ _sppc_api void sppc_sockaddr_family(struct sockaddr_storage const *restrict stor
 
 _gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(read_only, 4) _gnu_nonnull(4)
 _sppc_api int sppc_setsockopt(const int fd, const int level, const int optname, int const *restrict optval) {
-  constexpr auto optlen = (socklen_t)sizeof(optval);
+  constexpr auto optlen = (socklen_t)sizeof(*optval); // the value, not the pointer
   _extract_err setsockopt(fd, level, optname, optval, optlen);
   _return_normalized_err
 }
 
 _gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(write_only, 4) _gnu_nonnull(4)
 _sppc_api int sppc_getsockopt(const int fd, const int level, const int optname, int *restrict optval) {
-  auto optlen = (socklen_t)sizeof(optval);
+  auto optlen = (socklen_t)sizeof(*optval); // the value, not the pointer
   _extract_err getsockopt(fd, level, optname, optval, &optlen);
   _return_normalized_err
 }

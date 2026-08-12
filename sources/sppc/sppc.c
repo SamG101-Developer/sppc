@@ -113,7 +113,8 @@ extern int sppc_madvise(void *restrict addr, size_t const *restrict length, cons
 extern int sppc_dup(const int fd, int *restrict out_fd);
 extern int sppc_dup2(const int fd, const int target_fd);
 extern void sppc_get_pid(pid_t *restrict out_pid);
-extern int sppc_sendfile(const int from_fd, const int to_fd, const off_t *offset, const size_t count);
+extern int sppc_sendfile(const int from_fd, const int to_fd, off_t *offset, const size_t count,
+  ssize_t *restrict out_n);
 extern int sppc_socket(const int domain, const int type, const int protocol, int *restrict out_fd);
 extern int sppc_connect(const int fd, struct sockaddr_storage const *restrict storage);
 extern int sppc_accept(const int fd, struct sockaddr_storage *restrict out_storage, int *restrict out_fd);
@@ -158,7 +159,8 @@ extern int sppc_realpath(char const *restrict path, char *restrict buffer);
 extern int sppc_mktemp(char *restrict path, int *restrict out_fd);
 extern int sppc_mktemp_dir(char *restrict path);
 extern int sppc_statvfs(char const *restrict path, struct statvfs *restrict out);
-extern int sppc_copyfile(const int fd_in, const int fd_out, const size_t len, const int flags);
+extern int sppc_copyfile(const int fd_in, const int fd_out, const size_t len, const int flags,
+  ssize_t *restrict out_n);
 extern int sppc_strcpy(char *restrict dest, char const *restrict src);
 extern int sppc_strcat(char *restrict dest, char const *restrict src);
 extern int sppc_strcmp(char const *str1, char const *str2, bool *restrict out);
