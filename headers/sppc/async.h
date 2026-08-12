@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <pthread.h>
 #include <sppc/macros.h>
 
 #define STACK_SIZE (64 * 1024)
@@ -38,18 +39,58 @@ struct gt_task {
   uint32_t generation;
 };
 
-// Runtime state is defined once in sources/sppc/sppc.c. It
-// must not be static here as every TU including this header
-// would otherwise get a private scheduler (and a private
-// task_pool), so tasks spawned in one TU would be invisible
-// to another.
-extern gt_task gt_task_pool[MAX_TASKS];
-extern int gt_task_free;
-extern gt_task *gt_ready_head;
-extern gt_task *gt_ready_tail;
-extern gt_task *gt_current;
-extern gt_task *gt_free_head;
-extern gt_ctx gt_main_ctx;
+// Runtime state is defined once in sources/sppc/sppc.c. It must not be static
+// here as every TU including this header would otherwise get a private
+// scheduler, so tasks spawned in one TU would be invisible to another.
+//
+// It is thread-local: pthreads are the OS-level threading primitive and each
+// one runs its own `go` scheduler. That makes the runtime thread-safe by
+// construction rather than by locking -- there is no shared state to race on.
+// A task is therefore spawned and awaited on the same thread, which S++
+// enforces by making the Future type non-thread-sharable.
+//
+// The pool is a pointer, mapped on first use, not a thread-local array: in a
+// dlopen'd library TLS is dynamic, and glibc zeroes the whole block when a
+// thread first touches it, so a 15MB array would cost every thread 15MB
+// resident. Mapping it keeps that demand-faulted.
+extern _Thread_local gt_task *gt_task_pool;
+extern _Thread_local int gt_task_free;
+extern _Thread_local gt_task *gt_ready_head;
+extern _Thread_local gt_task *gt_ready_tail;
+extern _Thread_local gt_task *gt_current;
+extern _Thread_local gt_task *gt_free_head;
+extern _Thread_local gt_ctx gt_main_ctx;
+
+#define GT_POOL_BYTES ((size_t)MAX_TASKS * sizeof(gt_task))
+
+// Reclaims a thread's pool when it exits, via a pthread key.
+extern pthread_key_t gt_pool_key;
+extern pthread_once_t gt_pool_key_once;
+
+_gnu_inline _gnu_cold
+void gt_pool_release(void *pool) {
+  if (pool) { munmap(pool, GT_POOL_BYTES); }
+}
+
+_gnu_inline _gnu_cold
+void gt_pool_key_init(void) {
+  pthread_key_create(&gt_pool_key, gt_pool_release);
+}
+
+// Maps this thread's pool on first use. NULL means the mapping failed.
+_gnu_inline
+gt_task* gt_pool(void) {
+  if (gt_task_pool != NULL) { return gt_task_pool; }
+  pthread_once(&gt_pool_key_once, gt_pool_key_init);
+
+  const auto p = mmap(NULL, GT_POOL_BYTES, PROT_READ | PROT_WRITE,
+    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (p == MAP_FAILED) { return NULL; }
+
+  gt_task_pool = p;
+  pthread_setspecific(gt_pool_key, p);
+  return gt_task_pool;
+}
 
 extern void gt_switch(gt_ctx *old, gt_ctx *new);
 
@@ -164,7 +205,7 @@ _gnu_inline _gnu_hot
 gt_task* gt_resolve(size_t handle) {
   const auto index = handle >> 32;
   const auto generation = (uint32_t)handle;
-  if (generation == 0 || index >= MAX_TASKS) { return NULL; }
+  if (generation == 0 || index >= MAX_TASKS || gt_task_pool == NULL) { return NULL; }
   const auto t = &gt_task_pool[index];
   return t->generation == generation ? t : NULL;
 }
@@ -174,9 +215,12 @@ gt_task* gt_spawn(gt_entry_fn fn) {
   // Prefer a slot released by a completed task; only grow the pool when
   // none are free. Without this the pool was consumed permanently and the
   // 65537th spawn of a process aborted, however many had finished.
+  const auto pool = gt_pool();
+  if (pool == NULL) { return NULL; }
+
   auto t = gt_free_head;
   if (t == NULL && gt_task_free >= MAX_TASKS) { abort(); }
-  if (t == NULL) { t = &gt_task_pool[gt_task_free]; }
+  if (t == NULL) { t = &pool[gt_task_free]; }
 
   // Allocate before committing the slot, so a failure consumes nothing.
   const auto stack = gt_alloc_stack();

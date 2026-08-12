@@ -28,12 +28,15 @@ int main(void) {
   sppc_init();
   char detail[96];
 
-  CHECK("task_pool is one object across TUs", tu2_task_pool() == (void*)gt_task_pool,
-        tu2_task_pool() == (void*)gt_task_pool ? "shared" : "SEPARATE RUNTIMES");
-
   size_t h = 0;
   CHECK_EQ("sppc_async returns 0", sppc_async(&h, add, (size_t)3,
            (uintptr_t)10, (uintptr_t)20, (uintptr_t)12), 0);
+
+  // Checked after a spawn: the pool is mapped on first use, so before one both
+  // sides would read NULL and match for the wrong reason.
+  snprintf(detail, sizeof detail, "tu1=%p tu2=%p", (void*)gt_task_pool, tu2_task_pool());
+  CHECK("task_pool is one object across TUs",
+        gt_task_pool != NULL && tu2_task_pool() == (void*)gt_task_pool, detail);
   CHECK_EQ("await sums 10+20+12", (size_t)(uintptr_t)sppc_await(h), 42);
 
   // Spawned in the other TU, awaited here.

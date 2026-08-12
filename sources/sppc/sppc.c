@@ -4,14 +4,20 @@ pthread_mutex_t _stdin_mutex;
 pthread_mutex_t _stdout_mutex;
 pthread_mutex_t _stderr_mutex;
 
-gt_task gt_task_pool[MAX_TASKS];
-int gt_task_free = 0;
-gt_task *gt_ready_head = NULL;
-gt_task *gt_ready_tail = NULL;
-gt_task *gt_current = NULL;
-gt_task *gt_free_head = NULL;
-gt_ctx gt_main_ctx;
+_Thread_local gt_task *gt_task_pool = NULL;
+_Thread_local int gt_task_free = 0;
+_Thread_local gt_task *gt_ready_head = NULL;
+_Thread_local gt_task *gt_ready_tail = NULL;
+_Thread_local gt_task *gt_current = NULL;
+_Thread_local gt_task *gt_free_head = NULL;
+_Thread_local gt_ctx gt_main_ctx;
 
+pthread_key_t gt_pool_key;
+pthread_once_t gt_pool_key_once = PTHREAD_ONCE_INIT;
+
+extern void gt_pool_release(void *pool);
+extern void gt_pool_key_init(void);
+extern gt_task* gt_pool(void);
 extern void gt_enqueue(gt_task *t);
 extern gt_task* gt_dequeue(void);
 extern size_t gt_handle(gt_task const *t);
