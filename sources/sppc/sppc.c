@@ -94,7 +94,7 @@ extern int sppc_lstat(char const *restrict path, struct stat *restrict out);
 extern int sppc_poll(struct pollfd *restrict fds, const nfds_t count, const int timeout, int *restrict out_n);
 extern int sppc_lseek(const int fd, const off_t offset, const int whence, off_t *restrict out_pos);
 extern int sppc_mmap(const int fd, const size_t length, const int prot, const int flags, const off_t offset,
-  void *restrict out_addr);
+  void **restrict out_addr);
 extern int sppc_memprotect(void *addr, const size_t size, const int prot);
 extern int sppc_munmap(void *restrict addr, size_t const *restrict length);
 extern int sppc_pread(const int fd, void *restrict buffer, const size_t size, const size_t count, const off_t offset,

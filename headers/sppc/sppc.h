@@ -468,11 +468,14 @@ _sppc_api int sppc_lseek(const int fd, const off_t offset, const int whence, off
 }
 
 _posix_syscall(9)
-_gnu_inline _gnu_fd_arg(1)
+_gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(write_only, 6) _gnu_nonnull(6)
 _sppc_api int sppc_mmap(const int fd, const size_t length, const int prot, const int flags, const off_t offset,
-  void *restrict out_addr) {
-  _extract_err mmap(out_addr, length, prot, flags, fd, offset);
-  _return_normalized_ptr_err
+  void **restrict out_addr) {
+  // out_addr receives the mapping; it is not a placement hint. Passing it as
+  // mmap's first argument meant the caller never learned where the mapping
+  // landed, and NULL there lets the kernel choose the address.
+  _extract_err mmap(NULL, length, prot, flags, fd, offset);
+  _return_normalized_map_err(out_addr)
 }
 
 _posix_syscall(10)
