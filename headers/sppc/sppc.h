@@ -1189,13 +1189,17 @@ _sppc_api int sppc_async(size_t *handle, void*(*routine)(size_t, uintptr_t const
   }
 
   va_end(ap);
-  *handle = (size_t)task;
+  *handle = gt_handle(task);
   return 0;
 }
 
 _gnu_inline
 _sppc_api void* sppc_await(const size_t handle) {
-  _extract_err gt_await((gt_task*)handle);
+  // A handle whose slot has been recycled no longer resolves, so awaiting a
+  // completed task twice yields NULL rather than another task's result.
+  const auto task = gt_resolve(handle);
+  if (task == NULL) { return NULL; }
+  _extract_err gt_await(task);
   _return_pointer
 }
 

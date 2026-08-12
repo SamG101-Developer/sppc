@@ -9,10 +9,13 @@ int gt_task_free = 0;
 gt_task *gt_ready_head = NULL;
 gt_task *gt_ready_tail = NULL;
 gt_task *gt_current = NULL;
+gt_task *gt_free_head = NULL;
 gt_ctx gt_main_ctx;
 
 extern void gt_enqueue(gt_task *t);
 extern gt_task* gt_dequeue(void);
+extern size_t gt_handle(gt_task const *t);
+extern gt_task* gt_resolve(size_t handle);
 extern void* gt_alloc_stack(void);
 extern void gt_free_stack(void *p);
 extern void gt_task_entry(void);

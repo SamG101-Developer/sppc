@@ -35,6 +35,7 @@ struct gt_task {
   gt_entry_fn fn;
   size_t argc;
   uintptr_t argv[GT_MAX_ARGS];
+  uint32_t generation;
 };
 
 // Runtime state is defined once in sources/sppc/sppc.c. It
@@ -47,6 +48,7 @@ extern int gt_task_free;
 extern gt_task *gt_ready_head;
 extern gt_task *gt_ready_tail;
 extern gt_task *gt_current;
+extern gt_task *gt_free_head;
 extern gt_ctx gt_main_ctx;
 
 extern void gt_switch(gt_ctx *old, gt_ctx *new);
@@ -128,6 +130,10 @@ void gt_task_entry(void) {
 
   const auto next = gt_dequeue();
   if (!next) {
+    // Control is going back to the main context, which is not a task, so
+    // gt_current has to say so. Leaving it pointing at this finished task
+    // made the next await from main treat itself as running inside one.
+    gt_current = NULL;
     gt_switch(&self->ctx, &gt_main_ctx);
     abort();
   }
@@ -141,18 +147,48 @@ _gnu_inline _gnu_cold
 void gt_init(void) {
   gt_current = NULL;
   gt_ready_head = gt_ready_tail = NULL;
+  gt_free_head = NULL;
   gt_task_free = 0;
+}
+
+// A handle is the slot index paired with that slot's generation. Slots are
+// recycled, so a bare pointer would let a stale handle address a task that
+// has since been reused; the generation makes that detectable. Generations
+// start at 1, so a valid handle is never 0.
+_gnu_inline _gnu_hot _gnu_nonnull(1)
+size_t gt_handle(gt_task const *t) {
+  return ((size_t)(t - gt_task_pool) << 32) | t->generation;
+}
+
+_gnu_inline _gnu_hot
+gt_task* gt_resolve(size_t handle) {
+  const auto index = handle >> 32;
+  const auto generation = (uint32_t)handle;
+  if (generation == 0 || index >= MAX_TASKS) { return NULL; }
+  const auto t = &gt_task_pool[index];
+  return t->generation == generation ? t : NULL;
 }
 
 _gnu_inline _gnu_hot _gnu_nonnull(1)
 gt_task* gt_spawn(gt_entry_fn fn) {
-  if (gt_task_free >= MAX_TASKS) { abort(); }
-  const auto t = &gt_task_pool[gt_task_free];
+  // Prefer a slot released by a completed task; only grow the pool when
+  // none are free. Without this the pool was consumed permanently and the
+  // 65537th spawn of a process aborted, however many had finished.
+  auto t = gt_free_head;
+  if (t == NULL && gt_task_free >= MAX_TASKS) { abort(); }
+  if (t == NULL) { t = &gt_task_pool[gt_task_free]; }
+
+  // Allocate before committing the slot, so a failure consumes nothing.
+  const auto stack = gt_alloc_stack();
+  if (!stack) { return NULL; }
+  if (t == gt_free_head) { gt_free_head = t->next; }
+  else { gt_task_free++; }
+
+  const auto generation = t->generation;
   memset(t, 0, sizeof(*t));
+  t->generation = generation ? generation : 1;
   t->fn = fn;
-  t->stack = gt_alloc_stack();
-  if (!t->stack) { return NULL; }
-  gt_task_free++;
+  t->stack = stack;
 
   auto sp = (uint64_t*)((char*)t->stack + STACK_SIZE);
   sp = (uint64_t*)((uintptr_t)sp & ~0xFULL);
@@ -186,7 +222,15 @@ void* gt_await(gt_task *task) {
   if (!task->done) {
     if (gt_current) task->waiter = gt_current;
     else {
-      while (!task->done) gt_yield();
+      // Nothing runnable and the task is not done means nothing ever will
+      // make it done. This used to spin at 100% CPU forever.
+      while (!task->done) {
+        if (gt_ready_head == NULL) {
+          perror("[sppc] [CRITICAL] gt deadlock");
+          abort();
+        }
+        gt_yield();
+      }
       goto done;
     }
     const auto next = gt_dequeue();
@@ -202,6 +246,14 @@ void* gt_await(gt_task *task) {
 done:
   const auto res = task->result;
   gt_free_stack(task->stack);
+  task->stack = NULL;
   task->dead = 1;
+
+  // Retire the slot. Bumping the generation invalidates any handle still
+  // held for it, so a stale await fails to resolve rather than reading
+  // whatever task now occupies the slot.
+  task->generation++;
+  task->next = gt_free_head;
+  gt_free_head = task;
   return res;
 }
