@@ -33,6 +33,7 @@ sppc_add_test(test_once           test_once.c)
 sppc_add_test(test_errors         test_errors.c)
 sppc_add_test(test_truncation     test_truncation.c)
 sppc_add_test(test_gt_slots       test_gt_slots.c)
+sppc_add_test(test_fcntl          test_fcntl.c)
 sppc_add_test(test_async          test_async.c test_async_tu2.c)
 
 add_test(NAME test_exports

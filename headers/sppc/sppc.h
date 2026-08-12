@@ -739,9 +739,27 @@ _sppc_api int sppc_signal(const pid_t pid, const int signal) {
 _posix_syscall(72)
 _gnu_inline_va _gnu_fd_arg(1)
 _sppc_api int sppc_fcntl(const int fd, const int cmd, ...) {
+  // The third argument depends on cmd: some commands take none, some an int,
+  // some a pointer. Reading a void* unconditionally meant fetching a vararg
+  // that was never passed, or reinterpreting an int as a pointer.
   va_list ap;
   va_start(ap, cmd);
-  _extract_err fcntl(fd, cmd, va_arg(ap, void *));
+
+  int err;
+  switch (cmd) {
+    case F_GETFD: case F_GETFL: case F_GETOWN:
+    case F_GETSIG: case F_GETLEASE: case F_GETPIPE_SZ:
+      err = fcntl(fd, cmd);
+      break;
+    case F_GETLK: case F_SETLK: case F_SETLKW:
+    case F_GETOWN_EX: case F_SETOWN_EX:
+      err = fcntl(fd, cmd, va_arg(ap, void*));
+      break;
+    default:
+      err = fcntl(fd, cmd, va_arg(ap, int));
+      break;
+  }
+
   va_end(ap);
   _return_normalized_err
 }
