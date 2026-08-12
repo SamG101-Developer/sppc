@@ -1,9 +1,12 @@
-// Regression test: sppc_mmap must hand back the mapping and detect failure.
+// Regression test: sppc_mmap must hand back the mapping and report failure.
 //
-// It used to pass out_addr as mmap's placement hint and throw the result away,
-// so the caller never learned where the mapping landed. It also tested the
-// result against NULL, but mmap signals failure with MAP_FAILED, so every
-// error was reported as success.
+// It used to take the destination as a parameter, pass it to mmap as the
+// placement hint, and throw the result away, so the caller never learned where
+// the mapping landed. It also tested the result against NULL, but mmap signals
+// failure with MAP_FAILED, so every error was reported as success.
+//
+// It now returns the mapping like the other allocators: NULL on failure with
+// errno set.
 
 #include <sppc/sppc.h>
 #include "harness.h"
@@ -16,12 +19,9 @@ int main(void) {
   const size_t len = 4096;
 
   // --- anonymous mapping is returned and usable ---
-  void *addr = NULL;
-  const int rc = sppc_mmap(-1, len, PROT_READ | PROT_WRITE,
-                           MAP_PRIVATE | MAP_ANONYMOUS, 0, &addr);
-  CHECK_EQ("anonymous mmap succeeds", rc, 0);
+  void *addr = sppc_mmap(-1, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, 0);
   snprintf(detail, sizeof detail, "addr=%p", addr);
-  CHECK("out_addr was written", addr != NULL && addr != MAP_FAILED, detail);
+  CHECK("anonymous mmap returns a mapping", addr != NULL && addr != MAP_FAILED, detail);
 
   if (addr != NULL && addr != MAP_FAILED) {
     // Writing through it proves the mapping is real and read-write.
@@ -33,18 +33,19 @@ int main(void) {
     CHECK_EQ("munmap round-trips", sppc_munmap(addr, &len), 0);
   }
 
-  // --- failure must be reported, not swallowed ---
-  void *bad = (void*)0x1234;
-  const int rc_len = sppc_mmap(-1, 0, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, 0, &bad);
-  snprintf(detail, sizeof detail, "rc=%d EINVAL=%d", rc_len, EINVAL);
-  CHECK("length 0 reports EINVAL", rc_len == EINVAL, detail);
-  snprintf(detail, sizeof detail, "out_addr=%p", bad);
-  CHECK("out_addr untouched on failure", bad == (void*)0x1234, detail);
+  // --- failure is NULL, never MAP_FAILED, and errno is set ---
+  errno = 0;
+  void *bad = sppc_mmap(-1, 0, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, 0);
+  snprintf(detail, sizeof detail, "ret=%p errno=%d EINVAL=%d", bad, errno, EINVAL);
+  CHECK("length 0 returns NULL with EINVAL", bad == NULL && errno == EINVAL, detail);
 
-  void *bad2 = (void*)0x1234;
-  const int rc_fd = sppc_mmap(-1, len, PROT_READ, MAP_PRIVATE, 0, &bad2);  // file map, bad fd
-  snprintf(detail, sizeof detail, "rc=%d EBADF=%d", rc_fd, EBADF);
-  CHECK("bad fd reports EBADF", rc_fd == EBADF, detail);
+  errno = 0;
+  void *bad2 = sppc_mmap(-1, len, PROT_READ, MAP_PRIVATE, 0);   // file map, bad fd
+  snprintf(detail, sizeof detail, "ret=%p errno=%d EBADF=%d", bad2, errno, EBADF);
+  CHECK("bad fd returns NULL with EBADF", bad2 == NULL && errno == EBADF, detail);
+
+  CHECK("failure is never MAP_FAILED", bad != MAP_FAILED && bad2 != MAP_FAILED,
+        "callers only have to test for NULL");
 
   // --- file-backed mapping reflects file contents ---
   char path[] = "/tmp/sppc_test_mmap_XXXXXX";
@@ -54,9 +55,9 @@ int main(void) {
   sppc_write("mapped-file-content", 1, 19, fd, &written);
   CHECK_EQ("  wrote 19 bytes", written, 19);
 
-  void *fmap = NULL;
-  const int rc_file = sppc_mmap(fd, 19, PROT_READ, MAP_PRIVATE, 0, &fmap);
-  CHECK_EQ("file-backed mmap succeeds", rc_file, 0);
+  void *fmap = sppc_mmap(fd, 19, PROT_READ, MAP_PRIVATE, 0);
+  CHECK("file-backed mmap returns a mapping", fmap != NULL && fmap != MAP_FAILED,
+        fmap ? "mapped" : "NULL");
   CHECK("  contents match the file",
         fmap != NULL && fmap != MAP_FAILED && memcmp(fmap, "mapped-file-content", 19) == 0,
         fmap && fmap != MAP_FAILED ? (char*)fmap : "not mapped");

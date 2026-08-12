@@ -20,8 +20,9 @@
 
 #define _return_normalized_err return err < 0 ? errno : 0;
 #define _return_normalized_ptr_err return err == NULL ? errno : 0;
-// mmap reports failure as MAP_FAILED, not NULL, so it needs its own form.
-#define _return_normalized_map_err(into) if (err == MAP_FAILED) { return errno; } *into = err; return 0;
+// mmap signals failure with MAP_FAILED rather than NULL; normalise it so the
+// allocator wrappers all report failure the same way.
+#define _return_map_pointer return err == MAP_FAILED ? NULL : err;
 #define _return_normalized_pthread_err return err;
 #define _return_if_pthread_err(call) { const auto err_ = (call); if (err_ != 0) { return err_; } }
 #define _return_if_guarded_err(mutex, call)             \
