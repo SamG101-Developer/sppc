@@ -34,7 +34,11 @@
 
 #define _extract_err const auto err =
 #define _socket_addr_in_construction_helper socklen_t len = storage->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
-#define _socket_addr_out_construction_helper socklen_t len = out_storage->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+// The kernel fills out_storage, so its family cannot be read to size the
+// buffer beforehand: doing so reads uninitialised memory and, whenever it
+// guessed AF_INET, silently truncated the v6 address the kernel wrote back.
+// Offer the full storage; ss_family then describes what actually landed.
+#define _socket_addr_out_construction_helper socklen_t len = sizeof(struct sockaddr_storage);
 
 #define pthread_mutex_init_helper(flag)                               \
   ({ pthread_mutexattr_t attr;                                        \
