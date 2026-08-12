@@ -487,7 +487,7 @@ _sppc_api int sppc_lseek(const int fd, const off_t offset, const int whence, off
 }
 
 _posix_syscall(9)
-_gnu_inline _gnu_malloc _gnu_alloc_size(2) _gnu_fd_arg(1)
+_gnu_inline _gnu_malloc _gnu_alloc_size(2) // no fd_arg: MAP_ANONYMOUS passes -1
 _sppc_api void* sppc_mmap(const int fd, const size_t length, const int prot, const int flags, const off_t offset) {
   // NULL as the hint lets the kernel place the mapping. Returns the mapping
   // like the other allocators, NULL on failure with errno set.
@@ -569,8 +569,12 @@ _sppc_api int sppc_pipe(int *restrict out_read_fd, int *restrict out_write_fd) {
 }
 
 _posix_syscall(23)
-_gnu_inline _gnu_restrict_access(read_only, 2) _gnu_restrict_access(read_only, 3) _gnu_restrict_access(read_only, 4)
-_gnu_restrict_access(write_only, 5) _gnu_nonnull(2, 3, 4, 5)
+// select rewrites the fd sets in place and, on Linux, updates the timeout.
+// Any of the four may be NULL -- a NULL timeout is how you block forever --
+// so they must not be in nonnull. The out parameter is the sixth.
+_gnu_inline _gnu_restrict_access(read_write, 2) _gnu_restrict_access(read_write, 3)
+_gnu_restrict_access(read_write, 4) _gnu_restrict_access(read_write, 5)
+_gnu_restrict_access(write_only, 6) _gnu_nonnull(6)
 _sppc_api int sppc_select(const int nfds, fd_set *restrict readfds, fd_set *restrict writefds,
   fd_set *restrict exceptfds, struct timeval *restrict timeout, int *restrict out_n) {
   _extract_err select(nfds, readfds, writefds, exceptfds, timeout);
@@ -1018,14 +1022,14 @@ _sppc_api int sppc_strcasecmp(char const *str1, char const *str2, bool *restrict
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 3) _gnu_nonnull(1, 3)
 _sppc_api int sppc_strchr(char const *str, const char ch, size_t *restrict out_idx) {
   _extract_err strchr(str, ch);
-  if (err != NULL) { *out_idx = (int)(err - str); }
+  if (err != NULL) { *out_idx = (size_t)(err - str); }
   _return_normalized_ptr_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 3) _gnu_nonnull(1, 3)
 _sppc_api int sppc_strrchr(char const *str, const char ch, size_t *restrict out_idx) {
   _extract_err strrchr(str, ch);
-  if (err != NULL) { *out_idx = (int)(err - str); }
+  if (err != NULL) { *out_idx = (size_t)(err - str); }
   _return_normalized_ptr_err
 }
 
@@ -1033,7 +1037,7 @@ _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2
 _gnu_nonnull(1, 2, 3)
 _sppc_api int sppc_strstr(char const *haystack, char const *needle, size_t *restrict out_idx) {
   _extract_err strstr(haystack, needle);
-  if (err != NULL) { *out_idx = (int)(err - haystack); }
+  if (err != NULL) { *out_idx = (size_t)(err - haystack); }
   _return_normalized_ptr_err
 }
 
@@ -1041,7 +1045,7 @@ _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2
 _gnu_nonnull(1, 2, 3)
 _sppc_api int sppc_strrstr(char const *haystack, char const *needle, size_t *restrict out_idx) {
   _extract_err strrstr(haystack, needle);
-  if (err != NULL) { *out_idx = (int)(err - haystack); }
+  if (err != NULL) { *out_idx = (size_t)(err - haystack); }
   _return_normalized_ptr_err
 }
 
@@ -1049,7 +1053,7 @@ _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2
 _gnu_nonnull(1, 2, 3)
 _sppc_api int sppc_strcasestr(char const *haystack, char const *needle, size_t *restrict out_idx) {
   _extract_err strcasestr(haystack, needle);
-  if (err != NULL) { *out_idx = (int)(err - haystack); }
+  if (err != NULL) { *out_idx = (size_t)(err - haystack); }
   _return_normalized_ptr_err
 }
 
@@ -1057,7 +1061,7 @@ _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2
 _gnu_nonnull(1, 2, 3)
 _sppc_api int sppc_strpbrk(char const *string, char const *accept, size_t *restrict out_idx) {
   _extract_err strpbrk(string, accept);
-  if (err != NULL) { *out_idx = (int)(err - string); }
+  if (err != NULL) { *out_idx = (size_t)(err - string); }
   _return_normalized_ptr_err
 }
 

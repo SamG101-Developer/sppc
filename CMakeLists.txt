@@ -9,7 +9,7 @@ add_library(${PROJECT_NAME} SHARED
 target_include_directories(${PROJECT_NAME} PRIVATE headers)
 target_compile_features(${PROJECT_NAME} PRIVATE c_std_23)
 target_compile_definitions(${PROJECT_NAME} PRIVATE
-  FILE_OFFSET_BITS=64
+  _FILE_OFFSET_BITS=64
   DEBUG_BUILD=$<IF:$<CONFIG:Debug>,1,0>)
 
 # Only sppc_* leaves the shared library. The version script is authoritative
