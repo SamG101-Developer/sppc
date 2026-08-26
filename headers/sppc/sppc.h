@@ -927,7 +927,7 @@ _posix_syscall(230)
 _gnu_inline _gnu_restrict_access(read_only, 3) _gnu_nonnull(3)
 _sppc_api int sppc_clock_nanosleep(const clockid_t clock, const int flags, struct timespec const *restrict duration) {
   _extract_err clock_nanosleep(clock, flags, duration, NULL);
-  _return_normalized_pthread_err
+  _return_normalized_err
 }
 
 _posix_syscall(280)
@@ -1110,18 +1110,17 @@ _sppc_api void sppc_abort() {
 // ==================== SAFE SOCKETS ====================
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 3) _gnu_nonnull(1, 3)
-_sppc_api int sppc_set_sockaddr_v4(uint8_t const *octets, const uint16_t port,
+_sppc_api void sppc_set_sockaddr_v4(uint8_t const *octets, const uint16_t port,
   struct sockaddr_storage *restrict out_storage) {
   const auto addr = (struct sockaddr_in*)out_storage;
   addr->sin_family = AF_INET;
   addr->sin_port = htons(port);
   memset(&addr->sin_zero, 0, sizeof(addr->sin_zero));
   memcpy(&addr->sin_addr.s_addr, octets, 4);
-  return 0;
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 3) _gnu_nonnull(1, 3)
-_sppc_api int sppc_set_sockaddr_v6(uint16_t const *segments, const uint16_t port,
+_sppc_api void sppc_set_sockaddr_v6(uint16_t const *segments, const uint16_t port,
   struct sockaddr_storage *restrict out_storage) {
   const auto addr = (struct sockaddr_in6*)out_storage;
   addr->sin6_family = AF_INET6;
@@ -1129,27 +1128,24 @@ _sppc_api int sppc_set_sockaddr_v6(uint16_t const *segments, const uint16_t port
   addr->sin6_flowinfo = 0;
   addr->sin6_scope_id = 0;
   memcpy(&addr->sin6_addr.s6_addr, segments, 16);
-  return 0;
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2) _gnu_restrict_access(write_only, 3)
 _gnu_nonnull(1, 2, 3)
-_sppc_api int sppc_get_sockaddr_v4(struct sockaddr_storage const *restrict storage, uint8_t *out_octets,
+_sppc_api void sppc_get_sockaddr_v4(struct sockaddr_storage const *restrict storage, uint8_t *out_octets,
   uint16_t *out_port) {
   const auto addr = (struct sockaddr_in*)storage;
   memcpy(out_octets, &addr->sin_addr.s_addr, 4);
   *out_port = ntohs(addr->sin_port);
-  return 0;
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2) _gnu_restrict_access(write_only, 3)
 _gnu_nonnull(1, 2, 3)
-_sppc_api int sppc_get_sockaddr_v6(struct sockaddr_storage const *restrict storage, uint16_t *out_segments,
+_sppc_api void sppc_get_sockaddr_v6(struct sockaddr_storage const *restrict storage, uint16_t *out_segments,
   uint16_t *out_port) {
   const auto addr = (struct sockaddr_in6*)storage;
   memcpy(out_segments, &addr->sin6_addr.s6_addr, 16);
   *out_port = ntohs(addr->sin6_port);
-  return 0;
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2) _gnu_nonnull(1, 2)
