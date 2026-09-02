@@ -769,35 +769,28 @@ _sppc_api int sppc_signal(const pid_t pid, const int signal) {
   _return_normalized_err
 }
 
+// F_GETFD, F_GETFL, F_GETOWN, F_GETSIG, F_GETLEASE, F_GETPIPE_SZ.
 _posix_syscall(72)
-_gnu_inline_va _gnu_fd_arg(1)
-_sppc_api int sppc_fcntl(const int fd, const int cmd, ...) {
-  va_list ap;
-  va_start(ap, cmd);
+_gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(write_only, 3) _gnu_nonnull(3)
+_sppc_api int sppc_fcntl_get(const int fd, const int cmd, int *restrict out) {
+  _extract_err fcntl(fd, cmd);
+  _sret_normalised_store(out)
+  _return_normalized_err
+}
 
-  int err;
-  switch (cmd) {
-    case F_GETFD:
-    case F_GETFL:
-    case F_GETOWN:
-    case F_GETSIG:
-    case F_GETLEASE:
-    case F_GETPIPE_SZ:
-      err = fcntl(fd, cmd);
-      break;
-    case F_GETLK:
-    case F_SETLK:
-    case F_SETLKW:
-    case F_GETOWN_EX:
-    case F_SETOWN_EX:
-      err = fcntl(fd, cmd, va_arg(ap, void*));
-      break;
-    default:
-      err = fcntl(fd, cmd, va_arg(ap, int));
-      break;
-  }
+// F_SETFD, F_SETFL, F_SETOWN, F_SETSIG, F_SETLEASE, F_SETPIPE_SZ, F_DUPFD, F_DUPFD_CLOEXEC.
+_posix_syscall(72)
+_gnu_inline _gnu_fd_arg(1)
+_sppc_api int sppc_fcntl_set(const int fd, const int cmd, const int arg) {
+  _extract_err fcntl(fd, cmd, arg);
+  _return_normalized_err
+}
 
-  va_end(ap);
+// F_GETLK, F_SETLK and F_SETLKW take a "struct flock*".
+_posix_syscall(72)
+_gnu_inline _gnu_fd_arg(1) _gnu_nonnull(3)
+_sppc_api int sppc_fcntl_ptr(const int fd, const int cmd, void *restrict arg) {
+  _extract_err fcntl(fd, cmd, arg);
   _return_normalized_err
 }
 

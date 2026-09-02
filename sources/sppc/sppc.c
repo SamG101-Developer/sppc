@@ -137,7 +137,9 @@ extern int sppc_getsockname(int fd, struct sockaddr_storage *restrict out_storag
 extern int sppc_getpeername(int fd, struct sockaddr_storage *restrict out_storage);
 extern void sppc_exit(int status);
 extern int sppc_signal(pid_t pid, int signal);
-extern int sppc_fcntl(int fd, int cmd, ...);
+extern int sppc_fcntl_get(int fd, int cmd, int *restrict out);
+extern int sppc_fcntl_set(int fd, int cmd, int arg);
+extern int sppc_fcntl_ptr(int fd, int cmd, void *restrict arg);
 extern int sppc_fsync(int fd);
 extern int sppc_fdatasync(int fd);
 extern int sppc_truncate(char const *restrict path, off_t length);
