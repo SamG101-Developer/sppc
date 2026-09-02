@@ -2,6 +2,7 @@
 
 pthread_mutex_t _stdin_mutex;
 pthread_mutex_t _stdout_mutex;
+_Thread_local sppc_closure _sppc_once_closure;
 pthread_mutex_t _stderr_mutex;
 
 _Thread_local gt_task *gt_task_pool = NULL;
@@ -30,11 +31,12 @@ extern gt_task* gt_spawn(gt_entry_fn fn);
 extern void gt_yield(void);
 extern void* gt_await(gt_task *task);
 
-extern void* _sppc_thread_entry(void *start_routine);
+extern void* _sppc_thread_entry(void *closure);
+extern void _sppc_once_entry(void);
 
 extern int sppc_init(void);
 extern int sppc_cleanup(void);
-extern int sppc_pthread_create(void (*start_routine)(void), uint64_t *restrict out);
+extern int sppc_pthread_create(sppc_closure start_routine, uint64_t *restrict out);
 extern int sppc_pthread_join(uint64_t const *restrict handle);
 extern int sppc_pthread_detach(uint64_t const *restrict handle);
 extern void sppc_pthread_equal(uint64_t const *handle1, uint64_t const *handle2, uint64_t *restrict out);
@@ -48,7 +50,7 @@ extern int sppc_pthread_mutex_trylock(uint64_t const *restrict mutex);
 extern int sppc_pthread_mutex_unlock(uint64_t const *restrict mutex);
 extern int sppc_pthread_mutex_destroy(uint64_t const *restrict mutex);
 extern int sppc_pthread_once_init(uint64_t *restrict out);
-extern int sppc_pthread_once(uint64_t const *restrict once, void (*func)(void));
+extern int sppc_pthread_once(uint64_t const *restrict once, sppc_closure func);
 extern int sppc_pthread_cond_init(uint64_t *restrict out);
 extern int sppc_pthread_cond_wait(uint64_t const *restrict cond, uint64_t const *restrict mutex);
 extern int sppc_pthread_cond_clockwait(uint64_t const *restrict cond, uint64_t const *restrict mutex,

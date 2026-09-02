@@ -67,6 +67,20 @@ char* strrstr(const char *restrict haystack, const char *restrict needle) {
   return last;
 }
 
+// An S++ callable is a closure: a function pointer plus
+// the environment it captures, and the function's own
+// first parameter is that environment. It is laid out as
+// this pair and passed by value, which the SysV ABI puts
+// in two integer registers - the same as any two-pointer
+// struct - so C sees it as one argument and everything
+// after it stays where it belongs. Taking only the function
+// pointer would lose the captures and would shift every
+// following argument along by one register.
+typedef struct {
+  void (*fn)(void *);
+  void *env;
+} sppc_closure;
+
 // ==================== BOOT CODE ====================
 
 _gnu_inline _gnu_cold
@@ -98,19 +112,23 @@ _sppc_api int sppc_cleanup(void) {
 
 // ==================== THREADING ====================
 
-// pthread_create wants void*(*)(void*). Casting a void(*)(void) to that and
-// calling through it is undefined; the call goes through this trampoline
-// instead, leaving only the function-pointer/void* conversion POSIX requires
-// to work. Underscore-prefixed so the version script keeps it internal.
 _gnu_inline_va _gnu_nonnull(1)
-void* _sppc_thread_entry(void *start_routine) {
-  ((void (*)(void))start_routine)();
+void* _sppc_thread_entry(void *closure) {
+  sppc_closure *const cl = (sppc_closure*)closure;
+  const sppc_closure call = *cl;
+  free(cl);
+  call.fn(call.env);
   return NULL;
 }
 
-_gnu_inline _gnu_restrict_access(write_only, 2) _gnu_nonnull(1, 2)
-_sppc_api int sppc_pthread_create(void (*start_routine)(void), uint64_t *restrict out) {
-  _extract_err pthread_create((pthread_t*)out, NULL, _sppc_thread_entry, (void*)start_routine);
+_gnu_inline _gnu_restrict_access(write_only, 2) _gnu_nonnull(2)
+_sppc_api int sppc_pthread_create(const sppc_closure start_routine, uint64_t *restrict out) {
+  sppc_closure *const cl = (sppc_closure*)malloc(sizeof *cl);
+  if (cl == NULL) { return ENOMEM; }
+  *cl = start_routine;
+
+  _extract_err pthread_create((pthread_t*)out, NULL, _sppc_thread_entry, cl);
+  if (err != 0) { free(cl); }
   _return_normalized_pthread_err
 }
 
@@ -188,12 +206,18 @@ _sppc_api int sppc_pthread_once_init(uint64_t *restrict out) {
   return 0;
 }
 
-// The once-control has to outlive the call, so it is a caller-owned handle
-// like the other sync objects. It used to be a function-local constexpr,
-// which meant a fresh control every call and so func ran every time.
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_nonnull(1, 2)
-_sppc_api int sppc_pthread_once(uint64_t const *restrict once, void (*func)(void)) {
-  _extract_err pthread_once((pthread_once_t*)once, func);
+extern _Thread_local sppc_closure _sppc_once_closure;
+
+_gnu_inline_va
+void _sppc_once_entry(void) {
+  const sppc_closure call = _sppc_once_closure;
+  call.fn(call.env);
+}
+
+_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_nonnull(1)
+_sppc_api int sppc_pthread_once(uint64_t const *restrict once, const sppc_closure func) {
+  _sppc_once_closure = func;
+  _extract_err pthread_once((pthread_once_t*)once, _sppc_once_entry);
   _return_normalized_pthread_err
 }
 
@@ -569,9 +593,6 @@ _sppc_api int sppc_pipe(int *restrict out_read_fd, int *restrict out_write_fd) {
 }
 
 _posix_syscall(23)
-// select rewrites the fd sets in place and, on Linux, updates the timeout.
-// Any of the four may be NULL -- a NULL timeout is how you block forever --
-// so they must not be in nonnull. The out parameter is the sixth.
 _gnu_inline _gnu_restrict_access(read_write, 2) _gnu_restrict_access(read_write, 3)
 _gnu_restrict_access(read_write, 4) _gnu_restrict_access(read_write, 5)
 _gnu_restrict_access(write_only, 6) _gnu_nonnull(6)
@@ -627,8 +648,6 @@ _posix_syscall(40)
 _gnu_inline _gnu_fd_arg_read(1) _gnu_fd_arg_write(2) _gnu_restrict_access(write_only, 5) _gnu_nonnull(5)
 _sppc_api int sppc_sendfile(const int from_fd, const int to_fd, off_t *offset, const size_t count,
   ssize_t *restrict out_n) {
-  // A partial transfer is normal, so the count has to reach the caller.
-  // offset is updated by the kernel, hence not const.
   _extract_err sendfile(to_fd, from_fd, offset, count);
   _sret_normalised_store(out_n)
   _return_normalized_err
@@ -753,20 +772,24 @@ _sppc_api int sppc_signal(const pid_t pid, const int signal) {
 _posix_syscall(72)
 _gnu_inline_va _gnu_fd_arg(1)
 _sppc_api int sppc_fcntl(const int fd, const int cmd, ...) {
-  // The third argument depends on cmd: some commands take none, some an int,
-  // some a pointer. Reading a void* unconditionally meant fetching a vararg
-  // that was never passed, or reinterpreting an int as a pointer.
   va_list ap;
   va_start(ap, cmd);
 
   int err;
   switch (cmd) {
-    case F_GETFD: case F_GETFL: case F_GETOWN:
-    case F_GETSIG: case F_GETLEASE: case F_GETPIPE_SZ:
+    case F_GETFD:
+    case F_GETFL:
+    case F_GETOWN:
+    case F_GETSIG:
+    case F_GETLEASE:
+    case F_GETPIPE_SZ:
       err = fcntl(fd, cmd);
       break;
-    case F_GETLK: case F_SETLK: case F_SETLKW:
-    case F_GETOWN_EX: case F_SETOWN_EX:
+    case F_GETLK:
+    case F_SETLK:
+    case F_SETLKW:
+    case F_GETOWN_EX:
+    case F_SETOWN_EX:
       err = fcntl(fd, cmd, va_arg(ap, void*));
       break;
     default:
@@ -870,7 +893,10 @@ _sppc_api int sppc_readlink(char const *restrict path, char *restrict buffer, co
   if (buffer_size == 0) { return ERANGE; }
   _extract_err readlink(path, buffer, buffer_size);
   if (err < 0) { return errno; }
-  if ((size_t)err == buffer_size) { *buffer = '\0'; return ERANGE; } // no room to terminate
+  if ((size_t)err == buffer_size) {
+    *buffer = '\0';
+    return ERANGE;
+  } // no room to terminate
   buffer[err] = '\0';
   return 0;
 }
@@ -940,9 +966,6 @@ _sppc_api int sppc_utimensat(char const *restrict path, const int flags) {
 _posix_syscall(318)
 _gnu_inline _gnu_restrict_access(write_only, 2) _gnu_nonnull(2)
 _sppc_api int sppc_getrandom(const size_t size, char *restrict out) {
-  // getrandom may return fewer bytes than asked for. Discarding that count
-  // left the tail of the buffer unfilled while reporting success, so keep
-  // going until the whole buffer is random.
   size_t filled = 0;
   while (filled < size) {
     const auto n = getrandom(out + filled, size - filled, 0);
@@ -1073,14 +1096,18 @@ _sppc_api void* sppc_strdup(char const *str) {
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2, 3) _gnu_nonnull(1, 2)
 _sppc_api int sppc_getenv(char const *restrict key, char *restrict out, const size_t size) {
-  // Copies the whole value, not just its first byte, and needs `size` to do
-  // that safely. Truncation is reported rather than returned silently.
   if (size == 0) { return ERANGE; }
   _extract_err secure_getenv(key);
-  if (err == NULL) { *out = '\0'; return ENOENT; }
+  if (err == NULL) {
+    *out = '\0';
+    return ENOENT;
+  }
 
   const auto len = strlen(err);
-  if (len >= size) { *out = '\0'; return ERANGE; }
+  if (len >= size) {
+    *out = '\0';
+    return ERANGE;
+  }
   memcpy(out, err, len + 1);
   return 0;
 }
@@ -1155,14 +1182,14 @@ _sppc_api void sppc_sockaddr_family(struct sockaddr_storage const *restrict stor
 
 _gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(read_only, 4) _gnu_nonnull(4)
 _sppc_api int sppc_setsockopt(const int fd, const int level, const int optname, int const *restrict optval) {
-  constexpr auto optlen = (socklen_t)sizeof(*optval); // the value, not the pointer
+  constexpr auto optlen = (socklen_t)sizeof(*optval);
   _extract_err setsockopt(fd, level, optname, optval, optlen);
   _return_normalized_err
 }
 
 _gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(write_only, 4) _gnu_nonnull(4)
 _sppc_api int sppc_getsockopt(const int fd, const int level, const int optname, int *restrict optval) {
-  auto optlen = (socklen_t)sizeof(*optval); // the value, not the pointer
+  auto optlen = (socklen_t)sizeof(*optval);
   _extract_err getsockopt(fd, level, optname, optval, &optlen);
   _return_normalized_err
 }
