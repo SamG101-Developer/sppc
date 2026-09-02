@@ -118,17 +118,17 @@ void* _sppc_thread_entry(void *closure) {
   const sppc_closure call = *cl;
   free(cl);
   call.fn(call.env);
+  free(call.env);
   return NULL;
 }
 
 _gnu_inline _gnu_restrict_access(write_only, 2) _gnu_nonnull(2)
 _sppc_api int sppc_pthread_create(const sppc_closure start_routine, uint64_t *restrict out) {
   sppc_closure *const cl = (sppc_closure*)malloc(sizeof *cl);
-  if (cl == NULL) { return ENOMEM; }
+  if (cl == NULL) { free(start_routine.env); return ENOMEM; }
   *cl = start_routine;
-
   _extract_err pthread_create((pthread_t*)out, NULL, _sppc_thread_entry, cl);
-  if (err != 0) { free(cl); }
+  if (err != 0) { free(cl); free(start_routine.env); }
   _return_normalized_pthread_err
 }
 
@@ -218,6 +218,7 @@ _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_nonnull(1)
 _sppc_api int sppc_pthread_once(uint64_t const *restrict once, const sppc_closure func) {
   _sppc_once_closure = func;
   _extract_err pthread_once((pthread_once_t*)once, _sppc_once_entry);
+  free(func.env);
   _return_normalized_pthread_err
 }
 
