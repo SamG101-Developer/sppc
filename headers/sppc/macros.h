@@ -1,5 +1,8 @@
 #pragma once
 
+#define _sppc_likely(x) __builtin_expect(!!(x), 1)
+#define _sppc_unlikely(x) __builtin_expect(!!(x), 0)
+
 #define _gnu_inline inline __attribute__((always_inline)) __attribute__((flatten))
 #define _gnu_inline_va inline __attribute__((flatten))
 #define _sppc_api __attribute__((visibility("default"))) __attribute__((nothrow))
