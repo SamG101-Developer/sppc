@@ -5,6 +5,13 @@ pthread_mutex_t _stdout_mutex;
 _Thread_local sppc_closure _sppc_once_closure;
 pthread_mutex_t _stderr_mutex;
 
+__attribute__((visibility("default"))) __attribute__((tls_model("initial-exec")))
+_Thread_local void *__safestack_unsafe_stack_ptr = NULL;
+
+__attribute__((tls_model("initial-exec"))) _Thread_local void *_unsafe_stack_base = NULL;
+__attribute__((tls_model("initial-exec"))) _Thread_local size_t _unsafe_stack_size = 0;
+bool _unsafe_stack_wanted = false;
+
 _Thread_local gt_task *gt_task_pool = NULL;
 _Thread_local int gt_task_free = 0;
 _Thread_local gt_task *gt_ready_head = NULL;
@@ -34,6 +41,8 @@ extern void* gt_await(gt_task *task);
 extern void* _sppc_thread_entry(void *closure);
 extern void _sppc_once_entry(void);
 
+extern int sppc_unsafe_stack_up(void);
+extern void sppc_unsafe_stack_down(void);
 extern int sppc_init(void);
 extern int sppc_cleanup(void);
 extern int sppc_pthread_create(sppc_closure start_routine, uint64_t *restrict out);

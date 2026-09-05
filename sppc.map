@@ -3,12 +3,18 @@
  * runtime (gt_switch), the stdio mutexes, and any future internal helper --
  * is bound locally and invisible to dlsym/nm -gD.
  *
+ * "__safestack_unsafe_stack_ptr" is the one exception: it is not s++'s to
+ * name, it is what llvm emits a reference to in the prologue of every
+ * function it splits, and the executable cannot reach it unless it is
+ * global here.
+ *
  * Anonymous version node on purpose: symbols stay unversioned, so the FFI can
  * dlsym("sppc_init") rather than dlsym("sppc_init@@SPPC_1.0").
  */
 {
   global:
     sppc_*;
+    __safestack_unsafe_stack_ptr;
   local:
     *;
 };

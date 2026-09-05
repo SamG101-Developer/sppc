@@ -81,6 +81,82 @@ typedef struct {
   void *env;
 } sppc_closure;
 
+// ==================== SPLIT STACK ====================
+
+// The top of this thread's unsafe stack. Every function the compiler split,
+// reads this in its prologue and writes it back in its epilogue, so it is
+// the one piece of the safe-stack scheme that lives out here rather than in
+// the generated code. The name is llvm's, not s++'s. [DON'T CHANGE].
+extern _Thread_local void *__safestack_unsafe_stack_ptr;
+
+// The mapping behind it, and its size, kept so the thread can hand it back.
+extern _Thread_local void *_unsafe_stack_base;
+extern _Thread_local size_t _unsafe_stack_size;
+
+// Whether the program was built with split stacks at all. Set by the main
+// thread before any other is created, and only read after that, so it needs
+// no synchronisation.
+extern bool _unsafe_stack_wanted;
+
+#define UNSAFE_STACK_MIN (1024 * 1024)
+#define UNSAFE_STACK_MAX (64 * 1024 * 1024)
+
+_gnu_inline _gnu_cold
+_sppc_api int sppc_unsafe_stack_up(void) {
+  if (_unsafe_stack_base != NULL) { return 0; }
+  _unsafe_stack_wanted = true;
+
+  // Sized off the safe stack this thread was actually given, so the two
+  // run out at roughly the same depth and neither becomes a surprise limit
+  // on the other. A thread whose attributes cannot be read gets the floor.
+  auto size = (size_t)0;
+  pthread_attr_t attr;
+  if (pthread_getattr_np(pthread_self(), &attr) == 0) {
+    void *unused_base;
+    pthread_attr_getstack(&attr, &unused_base, &size);
+    pthread_attr_destroy(&attr);
+  }
+
+  // Clamp the size around the provided minimum and maximum stack sizes,
+  // to stay with in spec.
+  if (size < UNSAFE_STACK_MIN) { size = UNSAFE_STACK_MIN; }
+  if (size > UNSAFE_STACK_MAX) { size = UNSAFE_STACK_MAX; }
+
+  const auto page = (size_t)sysconf(_SC_PAGESIZE);
+  size = (size + page - 1) & ~(page - 1);
+  const auto total = size + GUARD_SIZE;
+
+  // "MAP_NORESERVE" because this is a stack: the whole of it is reserved
+  // address space and only the part actually reached is ever paid for.
+  const auto p = mmap(
+    NULL, total, PROT_READ | PROT_WRITE,
+    MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_STACK, -1, 0);
+  if (p == MAP_FAILED) { return errno; }
+
+  // The guard goes at the low end, which is the end the stack grows
+  // towards, so an overflow of a buffer lands on nothing mapped instead of
+  // on whatever the allocator happened to put below it.
+  if (mprotect(p, GUARD_SIZE, PROT_NONE) != 0) {
+    const auto err = errno;
+    munmap(p, total);
+    return err;
+  }
+
+  _unsafe_stack_base = p;
+  _unsafe_stack_size = total;
+  __safestack_unsafe_stack_ptr = (char*)p + total;
+  return 0;
+}
+
+_gnu_inline _gnu_cold
+_sppc_api void sppc_unsafe_stack_down(void) {
+  if (_unsafe_stack_base == NULL) { return; }
+  munmap(_unsafe_stack_base, _unsafe_stack_size);
+  _unsafe_stack_base = NULL;
+  _unsafe_stack_size = 0;
+  __safestack_unsafe_stack_ptr = NULL;
+}
+
 // ==================== BOOT CODE ====================
 
 _gnu_inline _gnu_cold
@@ -117,8 +193,21 @@ void* _sppc_thread_entry(void *closure) {
   sppc_closure *const cl = (sppc_closure*)closure;
   const sppc_closure call = *cl;
   free(cl);
+
+  // Before the callable, not after: the prologue of the s++ code about to
+  // run reads this thread's unsafe stack pointer, and a thread that never
+  // set one up would read a null one. There is nowhere to report a failure
+  // to from here, and running on a null unsafe stack is not an option, so
+  // this is one of the few places the runtime gives up outright.
+  if (_unsafe_stack_wanted && sppc_unsafe_stack_up() != 0) { abort(); }
+
   call.fn(call.env);
   free(call.env);
+
+  // The thread is going away and its stack with it. Unlike the main
+  // thread's, this one is worth handing back: a process that spawns
+  // threads for its lifetime would otherwise accumulate one mapping each.
+  sppc_unsafe_stack_down();
   return NULL;
 }
 
