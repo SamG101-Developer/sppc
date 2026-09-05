@@ -380,7 +380,7 @@ _sppc_api void* sppc_malloc(const size_t size) {
 
 _gnu_inline _gnu_malloc _gnu_alloc_size(1) _gnu_alloc_align(2)
 _sppc_api void* sppc_aligned_alloc(const size_t size, const size_t alignment) {
-  _extract_err aligned_alloc(size, alignment);
+  _extract_err aligned_alloc(alignment, size);
   _return_pointer
 }
 
