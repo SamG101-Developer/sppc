@@ -603,8 +603,6 @@ _sppc_api int sppc_lseek(const int fd, const off_t offset, const int whence, off
 _posix_syscall(9)
 _gnu_inline _gnu_malloc _gnu_alloc_size(2) // no fd_arg: MAP_ANONYMOUS passes -1
 _sppc_api void* sppc_mmap(const int fd, const size_t length, const int prot, const int flags, const off_t offset) {
-  // NULL as the hint lets the kernel place the mapping. Returns the mapping
-  // like the other allocators, NULL on failure with errno set.
   _extract_err mmap(NULL, length, prot, flags, fd, offset);
   _return_map_pointer
 }
@@ -1272,6 +1270,22 @@ _sppc_api int sppc_setsockopt(const int fd, const int level, const int optname, 
 
 _gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(write_only, 4) _gnu_nonnull(4)
 _sppc_api int sppc_getsockopt(const int fd, const int level, const int optname, int *restrict optval) {
+  auto optlen = (socklen_t)sizeof(*optval);
+  _extract_err getsockopt(fd, level, optname, optval, &optlen);
+  _return_normalized_err
+}
+
+_gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(read_only, 4) _gnu_nonnull(4)
+_sppc_api int sppc_setsockopt_timeval(const int fd, const int level, const int optname,
+  struct timeval const *restrict optval) {
+  constexpr auto optlen = (socklen_t)sizeof(*optval);
+  _extract_err setsockopt(fd, level, optname, optval, optlen);
+  _return_normalized_err
+}
+
+_gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(write_only, 4) _gnu_nonnull(4)
+_sppc_api int sppc_getsockopt_timeval(const int fd, const int level, const int optname,
+  struct timeval *restrict optval) {
   auto optlen = (socklen_t)sizeof(*optval);
   _extract_err getsockopt(fd, level, optname, optval, &optlen);
   _return_normalized_err

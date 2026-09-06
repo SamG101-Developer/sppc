@@ -205,6 +205,8 @@ extern void sppc_get_sockaddr_v6(struct sockaddr_storage const *restrict storage
 extern void sppc_sockaddr_family(struct sockaddr_storage const *restrict storage, int *restrict out_family);
 extern int sppc_setsockopt(int fd, int level, int optname, int const *restrict optval);
 extern int sppc_getsockopt(int fd, int level, int optname, int *restrict optval);
+extern int sppc_setsockopt_timeval(int fd, int level, int optname, struct timeval const *restrict optval);
+extern int sppc_getsockopt_timeval(int fd, int level, int optname, struct timeval *restrict optval);
 extern int sppc_stdin_read(char *restrict buffer, size_t size, size_t count, ssize_t *restrict out_n);
 extern int sppc_stdout_write(char const *restrict buffer, size_t size, size_t count,
   ssize_t *restrict out_n);
