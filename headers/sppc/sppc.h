@@ -1291,6 +1291,22 @@ _sppc_api int sppc_getsockopt_timeval(const int fd, const int level, const int o
   _return_normalized_err
 }
 
+_gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(read_only, 4) _gnu_nonnull(4)
+_sppc_api int sppc_setsockopt_linger(const int fd, const int level, const int optname,
+  struct linger const *restrict optval) {
+  constexpr auto optlen = (socklen_t)sizeof(*optval);
+  _extract_err setsockopt(fd, level, optname, optval, optlen);
+  _return_normalized_err
+}
+
+_gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(write_only, 4) _gnu_nonnull(4)
+_sppc_api int sppc_getsockopt_linger(const int fd, const int level, const int optname,
+  struct linger *restrict optval) {
+  auto optlen = (socklen_t)sizeof(*optval);
+  _extract_err getsockopt(fd, level, optname, optval, &optlen);
+  _return_normalized_err
+}
+
 // ==================== SPECIALISED SYSCALLS ====================
 
 _gnu_inline _gnu_restrict_access(write_only, 1) _gnu_restrict_access(write_only, 4) _gnu_nonnull(1, 4)

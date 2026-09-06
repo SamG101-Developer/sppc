@@ -207,6 +207,8 @@ extern int sppc_setsockopt(int fd, int level, int optname, int const *restrict o
 extern int sppc_getsockopt(int fd, int level, int optname, int *restrict optval);
 extern int sppc_setsockopt_timeval(int fd, int level, int optname, struct timeval const *restrict optval);
 extern int sppc_getsockopt_timeval(int fd, int level, int optname, struct timeval *restrict optval);
+extern int sppc_setsockopt_linger(int fd, int level, int optname, struct linger const *restrict optval);
+extern int sppc_getsockopt_linger(int fd, int level, int optname, struct linger *restrict optval);
 extern int sppc_stdin_read(char *restrict buffer, size_t size, size_t count, ssize_t *restrict out_n);
 extern int sppc_stdout_write(char const *restrict buffer, size_t size, size_t count,
   ssize_t *restrict out_n);
