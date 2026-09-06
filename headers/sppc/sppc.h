@@ -245,50 +245,55 @@ _sppc_api void sppc_pthread_self(uint64_t *restrict out) {
 
 _gnu_inline _gnu_restrict_access(write_only, 1)
 _sppc_api int sppc_pthread_mutex_init(uint64_t *restrict out) {
-  _extract_err pthread_mutex_init_helper(DEBUG_BUILD ? PTHREAD_MUTEX_ERRORCHECK : PTHREAD_MUTEX_NORMAL);
-  _return_normalized_pthread_err
+  _pthread_handle_alloc(pthread_mutex_t)
+  _extract_err pthread_mutex_init_helper(obj, DEBUG_BUILD ? PTHREAD_MUTEX_ERRORCHECK : PTHREAD_MUTEX_NORMAL);
+  _pthread_handle_publish(out)
 }
 
 _gnu_inline _gnu_restrict_access(write_only, 1)
 _sppc_api int sppc_pthread_mutex_init_recursive(uint64_t *restrict out) {
-  _extract_err pthread_mutex_init_helper(PTHREAD_MUTEX_RECURSIVE);
-  _return_normalized_pthread_err
+  _pthread_handle_alloc(pthread_mutex_t)
+  _extract_err pthread_mutex_init_helper(obj, PTHREAD_MUTEX_RECURSIVE);
+  _pthread_handle_publish(out)
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_mutex_lock(uint64_t const *restrict mutex) {
-  _extract_err pthread_mutex_lock((pthread_mutex_t*)mutex);
+  _extract_err pthread_mutex_lock(_pthread_handle(pthread_mutex_t, mutex));
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 3)
 _sppc_api int sppc_pthread_mutex_clocklock(uint64_t const *restrict mutex, const clockid_t clock,
   struct timespec const *restrict duration) {
-  _extract_err pthread_mutex_clocklock((pthread_mutex_t*)mutex, clock, duration);
+  _extract_err pthread_mutex_clocklock(_pthread_handle(pthread_mutex_t, mutex), clock, duration);
   _return_special_error(ETIMEDOUT, 1)
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_mutex_trylock(uint64_t const *restrict mutex) {
-  _extract_err pthread_mutex_trylock((pthread_mutex_t*)mutex);
+  _extract_err pthread_mutex_trylock(_pthread_handle(pthread_mutex_t, mutex));
   _return_special_error(EBUSY, 1)
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_mutex_unlock(uint64_t const *restrict mutex) {
-  _extract_err pthread_mutex_unlock((pthread_mutex_t*)mutex);
+  _extract_err pthread_mutex_unlock(_pthread_handle(pthread_mutex_t, mutex));
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_mutex_destroy(uint64_t const *restrict mutex) {
-  _extract_err pthread_mutex_destroy((pthread_mutex_t*)mutex);
+  pthread_mutex_t *const obj = _pthread_handle(pthread_mutex_t, mutex);
+  _extract_err pthread_mutex_destroy(obj);
+  free(obj);
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(write_only, 1) _gnu_nonnull(1)
+// A "pthread_once_t" is an int, so unlike the mutex and friends it genuinely fits in the handle and lives there.
 _sppc_api int sppc_pthread_once_init(uint64_t *restrict out) {
   *out = 0; // clear the whole handle, not just the once-control inside it.
   *(pthread_once_t*)out = (pthread_once_t)PTHREAD_ONCE_INIT;
@@ -313,57 +318,66 @@ _sppc_api int sppc_pthread_once(uint64_t const *restrict once, const sppc_closur
 
 _gnu_inline _gnu_restrict_access(write_only, 1)
 _sppc_api int sppc_pthread_cond_init(uint64_t *restrict out) {
-  _extract_err pthread_cond_init((pthread_cond_t*)out, nullptr);
-  _return_normalized_pthread_err
+  _pthread_handle_alloc(pthread_cond_t)
+  _extract_err pthread_cond_init(obj, nullptr);
+  _pthread_handle_publish(out)
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2)
 _sppc_api int sppc_pthread_cond_wait(uint64_t const *restrict cond, uint64_t const *restrict mutex) {
-  _extract_err pthread_cond_wait((pthread_cond_t*)cond, (pthread_mutex_t*)mutex);
+  _extract_err pthread_cond_wait(
+    _pthread_handle(pthread_cond_t, cond),
+    _pthread_handle(pthread_mutex_t, mutex));
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(read_only, 4)
 _sppc_api int sppc_pthread_cond_clockwait(uint64_t const *restrict cond, uint64_t const *restrict mutex,
   const clockid_t clock, struct timespec const *restrict duration) {
-  _extract_err pthread_cond_clockwait((pthread_cond_t*)cond, (pthread_mutex_t*)mutex, clock, duration);
+  _extract_err pthread_cond_clockwait(
+    _pthread_handle(pthread_cond_t, cond),
+    _pthread_handle(pthread_mutex_t, mutex),
+    clock, duration);
   _return_special_error(ETIMEDOUT, 1)
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_cond_signal(uint64_t const *restrict cond) {
-  _extract_err pthread_cond_signal((pthread_cond_t*)cond);
+  _extract_err pthread_cond_signal(_pthread_handle(pthread_cond_t, cond));
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_cond_broadcast(uint64_t const *restrict cond) {
-  _extract_err pthread_cond_broadcast((pthread_cond_t*)cond);
+  _extract_err pthread_cond_broadcast(_pthread_handle(pthread_cond_t, cond));
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_cond_destroy(uint64_t const *restrict cond) {
-  _extract_err pthread_cond_destroy((pthread_cond_t*)cond);
+  pthread_cond_t *const obj = _pthread_handle(pthread_cond_t, cond);
+  _extract_err pthread_cond_destroy(obj);
+  free(obj);
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(write_only, 1)
 _sppc_api int sppc_pthread_rwlock_init(uint64_t *restrict rwlock) {
-  _extract_err pthread_rwlock_init((pthread_rwlock_t*)rwlock, nullptr);
-  _return_normalized_pthread_err
+  _pthread_handle_alloc(pthread_rwlock_t)
+  _extract_err pthread_rwlock_init(obj, nullptr);
+  _pthread_handle_publish(rwlock)
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_rwlock_rdlock(uint64_t const *restrict rwlock) {
-  _extract_err pthread_rwlock_rdlock((pthread_rwlock_t*)rwlock);
+  _extract_err pthread_rwlock_rdlock(_pthread_handle(pthread_rwlock_t, rwlock));
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_rwlock_tryrdlock(uint64_t const *restrict rwlock) {
-  _extract_err pthread_rwlock_tryrdlock((pthread_rwlock_t*)rwlock);
+  _extract_err pthread_rwlock_tryrdlock(_pthread_handle(pthread_rwlock_t, rwlock));
   _return_special_error(EBUSY, 1)
   _return_normalized_pthread_err
 }
@@ -371,20 +385,20 @@ _sppc_api int sppc_pthread_rwlock_tryrdlock(uint64_t const *restrict rwlock) {
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 3)
 _sppc_api int sppc_pthread_rwlock_clockrdlock(uint64_t const *restrict rwlock, const clockid_t clock,
   struct timespec const *restrict duration) {
-  _extract_err pthread_rwlock_clockrdlock((pthread_rwlock_t*)rwlock, clock, duration);
+  _extract_err pthread_rwlock_clockrdlock(_pthread_handle(pthread_rwlock_t, rwlock), clock, duration);
   _return_special_error(ETIMEDOUT, 1)
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_rwlock_wrlock(uint64_t const *restrict rwlock) {
-  _extract_err pthread_rwlock_wrlock((pthread_rwlock_t*)rwlock);
+  _extract_err pthread_rwlock_wrlock(_pthread_handle(pthread_rwlock_t, rwlock));
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_rwlock_trywrlock(uint64_t const *restrict rwlock) {
-  _extract_err pthread_rwlock_trywrlock((pthread_rwlock_t*)rwlock);
+  _extract_err pthread_rwlock_trywrlock(_pthread_handle(pthread_rwlock_t, rwlock));
   _return_special_error(EBUSY, 1)
   _return_normalized_pthread_err
 }
@@ -392,43 +406,49 @@ _sppc_api int sppc_pthread_rwlock_trywrlock(uint64_t const *restrict rwlock) {
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 3)
 _sppc_api int sppc_pthread_rwlock_clockwrlock(uint64_t const *restrict rwlock, const clockid_t clock,
   struct timespec const *restrict duration) {
-  _extract_err pthread_rwlock_clockwrlock((pthread_rwlock_t*)rwlock, clock, duration);
+  _extract_err pthread_rwlock_clockwrlock(_pthread_handle(pthread_rwlock_t, rwlock), clock, duration);
   _return_special_error(ETIMEDOUT, 1)
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_rwlock_unlock(uint64_t const *restrict rwlock) {
-  _extract_err pthread_rwlock_unlock((pthread_rwlock_t*)rwlock);
+  _extract_err pthread_rwlock_unlock(_pthread_handle(pthread_rwlock_t, rwlock));
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_rwlock_destroy(uint64_t const *restrict rwlock) {
-  _extract_err pthread_rwlock_destroy((pthread_rwlock_t*)rwlock);
+  pthread_rwlock_t *const obj = _pthread_handle(pthread_rwlock_t, rwlock);
+  _extract_err pthread_rwlock_destroy(obj);
+  free(obj);
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(write_only, 1)
 _sppc_api int sppc_pthread_barrier_init(uint64_t *restrict barrier, const uint64_t count) {
-  _extract_err pthread_barrier_init((pthread_barrier_t*)barrier, nullptr, count);
-  _return_normalized_pthread_err
+  _pthread_handle_alloc(pthread_barrier_t)
+  _extract_err pthread_barrier_init(obj, nullptr, count);
+  _pthread_handle_publish(barrier)
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_barrier_wait(uint64_t const *restrict barrier) {
-  _extract_err pthread_barrier_wait((pthread_barrier_t*)barrier);
+  _extract_err pthread_barrier_wait(_pthread_handle(pthread_barrier_t, barrier));
   _return_special_error(PTHREAD_BARRIER_SERIAL_THREAD, 1)
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_barrier_destroy(uint64_t const *restrict barrier) {
-  _extract_err pthread_barrier_destroy((pthread_barrier_t*)barrier);
+  pthread_barrier_t *const obj = _pthread_handle(pthread_barrier_t, barrier);
+  _extract_err pthread_barrier_destroy(obj);
+  free(obj);
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(write_only, 1)
+// As for "once": a "pthread_spinlock_t" is an int, so it lives in the handle rather than behind it.
 _sppc_api int sppc_pthread_spin_init(uint64_t *restrict spinlock) {
   _extract_err pthread_spin_init((pthread_spinlock_t*)spinlock, 0);
   _return_normalized_pthread_err

@@ -41,10 +41,21 @@
 #define _socket_addr_in_construction_helper socklen_t len = storage->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
 #define _socket_addr_out_construction_helper socklen_t len = sizeof(struct sockaddr_storage);
 
-#define pthread_mutex_init_helper(flag)                               \
+#define pthread_mutex_init_helper(target, flag)                       \
   ({ pthread_mutexattr_t attr;                                        \
   pthread_mutexattr_init(&attr);                                      \
   pthread_mutexattr_settype(&attr, (flag));                           \
-  const auto err_ = pthread_mutex_init((pthread_mutex_t*)out, &attr); \
+  const auto err_ = pthread_mutex_init((target), &attr);              \
   pthread_mutexattr_destroy(&attr);                                   \
   err_; })
+
+#define _pthread_handle(type, handle) ((type*)(uintptr_t)*(handle))
+
+#define _pthread_handle_alloc(type)              \
+  type *const obj = (type*)malloc(sizeof(type)); \
+  if (obj == NULL) { return ENOMEM; }
+
+#define _pthread_handle_publish(out)             \
+  if (err != 0) { free(obj); return err; }       \
+  *(out) = (uint64_t)(uintptr_t)obj;             \
+  return 0;
