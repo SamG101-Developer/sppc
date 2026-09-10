@@ -38,6 +38,17 @@
 #define _sret_normalised_store_ptr(into) *into = (size_t)err;
 
 #define _extract_err const auto err =
+
+// Make a blocking call through the green-thread runtime where it can take it,
+// and through the plain syscall where it cannot. The point of routing it is
+// that a task waiting on the operation yields the thread to the other tasks
+// instead of stopping all of them; the fallback covers a kernel without
+// io_uring, a submission queue that is momentarily full, and a program that
+// never started the runtime at all, so every use of this stays correct even
+// when nothing is routed.
+#define _extract_err_async(type, attempt, fallback) \
+  type _async_res = 0;                              \
+  const type err = (attempt) ? _async_res : (fallback);
 #define _socket_addr_in_construction_helper socklen_t len = storage->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
 #define _socket_addr_out_construction_helper socklen_t len = sizeof(struct sockaddr_storage);
 

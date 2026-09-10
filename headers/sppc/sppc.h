@@ -13,7 +13,8 @@
 #pragma GCC diagnostic ignored "-Wattributes"
 
 #include <sppc/macros.h>
-#include <sppc/async.h>
+#include <sppc/closure.h>
+#include <sppc/async2.h>
 #include <asm/ioctls.h>
 #include <arpa/inet.h>
 #include <errno.h>
@@ -67,20 +68,6 @@ char* strrstr(const char *restrict haystack, const char *restrict needle) {
   return last;
 }
 
-// An S++ callable is a closure: a function pointer plus
-// the environment it captures, and the function's own
-// first parameter is that environment. It is laid out as
-// this pair and passed by value, which the SysV ABI puts
-// in two integer registers - the same as any two-pointer
-// struct - so C sees it as one argument and everything
-// after it stays where it belongs. Taking only the function
-// pointer would lose the captures and would shift every
-// following argument along by one register.
-typedef struct {
-  void (*fn)(void *);
-  void *env;
-} sppc_closure;
-
 // ==================== SPLIT STACK ====================
 
 // The top of this thread's unsafe stack. Every function the compiler split,
@@ -124,7 +111,7 @@ _sppc_api int sppc_unsafe_stack_up(void) {
 
   const auto page = (size_t)sysconf(_SC_PAGESIZE);
   size = (size + page - 1) & ~(page - 1);
-  const auto total = size + GUARD_SIZE;
+  const auto total = size + page;
 
   // "MAP_NORESERVE" because this is a stack: the whole of it is reserved
   // address space and only the part actually reached is ever paid for.
@@ -136,7 +123,7 @@ _sppc_api int sppc_unsafe_stack_up(void) {
   // The guard goes at the low end, which is the end the stack grows
   // towards, so an overflow of a buffer lands on nothing mapped instead of
   // on whatever the allocator happened to put below it.
-  if (mprotect(p, GUARD_SIZE, PROT_NONE) != 0) {
+  if (mprotect(p, page, PROT_NONE) != 0) {
     const auto err = errno;
     munmap(p, total);
     return err;
@@ -170,7 +157,7 @@ _sppc_api int sppc_init(void) {
   pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
   mallopt(M_TRIM_THRESHOLD, 128 * 1024); // trim after 128KB free
   mallopt(M_MMAP_THRESHOLD, 64 * 1024); // mmap allocations above 64KB
-  gt_init(); // initialize the async green thread runtime.
+  _gt_init(); // initialize the async green thread runtime.
 
   _return_if_pthread_err(pthread_mutex_init(&_stdin_mutex, NULL))
   _return_if_pthread_err(pthread_mutex_init(&_stdout_mutex, NULL))
@@ -180,6 +167,11 @@ _sppc_api int sppc_init(void) {
 
 _gnu_inline _gnu_cold
 _sppc_api int sppc_cleanup(void) {
+  // Let every task that is still runnable finish, so one that was spawned and
+  // never awaited still releases what it captured rather than being abandoned
+  // with the process.
+  _gt_drain();
+
   _return_if_pthread_err(pthread_mutex_destroy(&_stdin_mutex))
   _return_if_pthread_err(pthread_mutex_destroy(&_stdout_mutex))
   _return_if_pthread_err(pthread_mutex_destroy(&_stderr_mutex))
@@ -553,7 +545,7 @@ _gnu_inline _gnu_fd_arg_read(4) _gnu_restrict_access(write_only, 1) _gnu_restric
 _gnu_nonnull(1, 5)
 _sppc_api int sppc_read(char *restrict buffer, const size_t size, const size_t count, const int fd,
   ssize_t *restrict out_n) {
-  _extract_err read(fd, buffer, size * count);
+  _extract_err_async(ssize_t, _gt_try_read(fd, buffer, size * count, &_async_res), read(fd, buffer, size * count))
   _sret_normalised_store(out_n)
   _return_normalized_err
 }
@@ -563,7 +555,7 @@ _gnu_inline _gnu_fd_arg_write(4) _gnu_restrict_access(read_only, 1) _gnu_restric
 _gnu_nonnull(1, 5)
 _sppc_api int sppc_write(char const *restrict buffer, const size_t size, const size_t count, const int fd,
   ssize_t *restrict out_n) {
-  _extract_err write(fd, buffer, size * count);
+  _extract_err_async(ssize_t, _gt_try_write(fd, buffer, size * count, &_async_res), write(fd, buffer, size * count))
   _sret_normalised_store(out_n)
   _return_normalized_err
 }
@@ -773,7 +765,7 @@ _posix_syscall(42)
 _gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(read_only, 2) _gnu_nonnull(2)
 _sppc_api int sppc_connect(const int fd, struct sockaddr_storage const *restrict storage) {
   _socket_addr_in_construction_helper
-  _extract_err connect(fd, (struct sockaddr*)storage, len);
+  _extract_err_async(int, _gt_try_connect(fd, (struct sockaddr*)storage, len, &_async_res), connect(fd, (struct sockaddr*)storage, len))
   _return_normalized_err
 }
 
@@ -781,7 +773,7 @@ _posix_syscall(43)
 _gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(write_only, 2) _gnu_restrict_access(write_only, 3) _gnu_nonnull(2, 3)
 _sppc_api int sppc_accept(const int fd, struct sockaddr_storage *restrict out_storage, int *restrict out_fd) {
   _socket_addr_out_construction_helper
-  _extract_err accept4(fd, (struct sockaddr*)out_storage, &len, O_CLOEXEC);
+  _extract_err_async(int, _gt_try_accept(fd, (struct sockaddr*)out_storage, &len, &_async_res), accept4(fd, (struct sockaddr*)out_storage, &len, O_CLOEXEC))
   _sret_normalised_store(out_fd)
   _return_normalized_err
 }
@@ -812,7 +804,7 @@ _posix_fake_syscall("Wrapper around `sendto`, using a nullptr storage (not expre
 _gnu_inline _gnu_fd_arg_write(1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(write_only, 5)
 _gnu_nonnull(2, 5)
 _sppc_api int sppc_send(const int fd, char const *data, const size_t size, const int flags, ssize_t *restrict out_n) {
-  _extract_err send(fd, data, size, flags);
+  _extract_err_async(ssize_t, _gt_try_send(fd, data, size, flags, &_async_res), send(fd, data, size, flags))
   _sret_normalised_store(out_n)
   _return_normalized_err
 }
@@ -821,7 +813,7 @@ _posix_fake_syscall("Wrapper around `recvfrom`, using a nullptr storage (not exp
 _gnu_inline _gnu_fd_arg_read(1) _gnu_restrict_access(write_only, 2) _gnu_restrict_access(write_only, 5)
 _gnu_nonnull(2, 5)
 _sppc_api int sppc_recv(const int fd, char *buffer, const size_t size, const int flags, ssize_t *restrict out_n) {
-  _extract_err recv(fd, buffer, size, flags);
+  _extract_err_async(ssize_t, _gt_try_recv(fd, buffer, size, flags, &_async_res), recv(fd, buffer, size, flags))
   _sret_normalised_store(out_n)
   _return_normalized_err
 }
@@ -905,7 +897,7 @@ _sppc_api int sppc_fcntl_ptr(const int fd, const int cmd, void *restrict arg) {
 _posix_syscall(74)
 _gnu_inline _gnu_fd_arg(1)
 _sppc_api int sppc_fsync(const int fd) {
-  _extract_err fsync(fd);
+  _extract_err_async(int, _gt_try_fsync(fd, &_async_res), fsync(fd))
   _return_normalized_err
 }
 
@@ -1357,38 +1349,41 @@ _sppc_api int sppc_stderr_write(char const *restrict buffer, const size_t size, 
 
 // ==================== ASYNC ====================
 
-_gnu_inline_va
-_gnu_restrict_access(write_only, 1) _gnu_nonnull(1)
-_sppc_api int sppc_async(size_t *handle, void*(*routine)(size_t, uintptr_t const *), const size_t argc, ...) {
-  if (argc > GT_MAX_ARGS) { return E2BIG; }
-
-  va_list ap;
-  va_start(ap, argc);
-
-  const auto task = gt_spawn((gt_entry_fn)routine);
-  if (!task) {
-    va_end(ap);
-    return ENOMEM;
-  }
-
-  task->argc = argc;
-  for (size_t i = 0; i < argc; ++i) {
-    task->argv[i] = va_arg(ap, uintptr_t);
-  }
-
-  va_end(ap);
-  *handle = gt_handle(task);
-  return 0;
+_gnu_inline _gnu_restrict_access(write_only, 1) _gnu_nonnull(1)
+_sppc_api int sppc_async(int *handle, const sppc_closure body) {
+  // The body is a closure rather than a function and an argument list, which
+  // is what lets an s++ callable cross intact: its captures ride along in the
+  // environment, and its result goes to a cell the caller allocated and the
+  // closure captured. A c variadic list could carry neither - the arguments
+  // after a pack would have to be passed as real varargs rather than
+  // collapsed into a tuple, and nothing here could know the size of what came
+  // back.
+  const auto err = _gt_spawn(handle, body, _gt_trampoline);
+  if (err != 0) { free(body.env); }
+  return err;
 }
 
 _gnu_inline
-_sppc_api void* sppc_await(const size_t handle) {
-  // A handle whose slot has been recycled no longer resolves, so awaiting a
-  // completed task twice yields NULL rather than another task's result.
-  const auto task = gt_resolve(handle);
-  if (task == NULL) { return NULL; }
-  _extract_err gt_await(task);
-  _return_pointer
+_sppc_api int sppc_await(const int handle) {
+  // Nothing is returned but the error: the value the task produced is already
+  // in the caller's own cell by the time this returns.
+  return _gt_await(handle);
+}
+
+_gnu_inline
+_sppc_api int sppc_async_detach(const int handle) {
+  return _gt_detach(handle);
+}
+
+_gnu_inline
+_sppc_api void sppc_async_yield(void) {
+  _gt_yield();
+}
+
+_gnu_inline
+_sppc_api void sppc_async_stack_size(const size_t bytes) {
+  _gt_init();
+  _gt_set_stack_size(bytes);
 }
 
 #pragma GCC diagnostic pop

@@ -12,31 +12,38 @@ __attribute__((tls_model("initial-exec"))) _Thread_local void *_unsafe_stack_bas
 __attribute__((tls_model("initial-exec"))) _Thread_local size_t _unsafe_stack_size = 0;
 bool _unsafe_stack_wanted = false;
 
-_Thread_local gt_task *gt_task_pool = NULL;
-_Thread_local int gt_task_free = 0;
-_Thread_local gt_task *gt_ready_head = NULL;
-_Thread_local gt_task *gt_ready_tail = NULL;
-_Thread_local gt_task *gt_current = NULL;
-_Thread_local gt_task *gt_free_head = NULL;
-_Thread_local gt_ctx gt_main_ctx;
+_Thread_local gt_runtime _gt_R;
 
-pthread_key_t gt_pool_key;
-pthread_once_t gt_pool_key_once = PTHREAD_ONCE_INIT;
+// The trampoline's address is taken when a task's stack is laid out, so it
+// needs a real out-of-line copy rather than being inlined at every use.
+extern void _gt_trampoline(void);
 
-extern void gt_pool_release(void *pool);
-extern void gt_pool_key_init(void);
-extern gt_task* gt_pool(void);
-extern void gt_enqueue(gt_task *t);
-extern gt_task* gt_dequeue(void);
-extern size_t gt_handle(gt_task const *t);
-extern gt_task* gt_resolve(size_t handle);
-extern void* gt_alloc_stack(void);
-extern void gt_free_stack(void *p);
-extern void gt_task_entry(void);
-extern void gt_init(void);
-extern gt_task* gt_spawn(gt_entry_fn fn);
-extern void gt_yield(void);
-extern void* gt_await(gt_task *task);
+// Variadic and noreturn, so it is never actually inlined; without this the
+// only definition is the inline one and every use is an undefined reference.
+extern void _gt_panic(const char *msg, ...);
+
+extern gt_handle_t _gt_handle(gt_task const *t);
+extern size_t _gt_page(void);
+extern void* _gt_stack_alloc(size_t size);
+extern void _gt_stack_free(void *usable, size_t size);
+extern void* _gt_stack_prime(void *usable, size_t size, void (*entry)(void));
+extern void _gt_set_guard_pages(int enabled);
+extern void _gt_rq_push(gt_task *t);
+extern gt_task* _gt_rq_pop(void);
+extern void _gt_reap(void);
+extern void _gt_switch_to(gt_task *next);
+extern gt_task* _gt_pick(void);
+extern void _gt_block(int state);
+extern gt_task* _gt_slot_alloc(void);
+extern void _gt_slot_free(gt_task *t);
+extern gt_task* _gt_resolve(gt_handle_t handle);
+extern void _gt_init(void);
+extern void _gt_set_stack_size(size_t bytes);
+extern int _gt_spawn(gt_handle_t *out, sppc_closure body, void (*entry)(void));
+extern void _gt_yield(void);
+extern int _gt_await(gt_handle_t handle);
+extern int _gt_detach(gt_handle_t handle);
+extern void _gt_drain(void);
 
 extern void* _sppc_thread_entry(void *closure);
 extern void _sppc_once_entry(void);
@@ -214,5 +221,8 @@ extern int sppc_stdout_write(char const *restrict buffer, size_t size, size_t co
   ssize_t *restrict out_n);
 extern int sppc_stderr_write(char const *restrict buffer, size_t size, size_t count,
   ssize_t *restrict out_n);
-extern int sppc_async(size_t *handle, void*(*routine)(size_t, uintptr_t const *), size_t argc, ...);
-extern void* sppc_await(size_t handle);
+extern int sppc_async(int *handle, sppc_closure body);
+extern int sppc_await(int handle);
+extern int sppc_async_detach(int handle);
+extern void sppc_async_yield(void);
+extern void sppc_async_stack_size(size_t bytes);
