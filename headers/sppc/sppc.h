@@ -14,7 +14,8 @@
 
 #include <sppc/macros.h>
 #include <sppc/closure.h>
-#include <sppc/async2.h>
+#include <sppc/async.h>
+#include <sppc/backtrace.h>
 #include <asm/ioctls.h>
 #include <arpa/inet.h>
 #include <errno.h>
@@ -151,6 +152,7 @@ _sppc_api int sppc_init(void) {
   signal(SIGPIPE, SIG_IGN); // let write() return EPIPE instead of killing the process when writing to a closed fd.
   signal(SIGCHLD, SIG_DFL); // ensure zombie reaping works correctly.
   signal(SIGHUP, SIG_IGN); // ignore SIGHUP to prevent accidental termination when the controlling terminal is closed.
+  _sppc_bt_install(); // print a backtrace on a fatal signal (abort, trap, fault).
   setlocale(LC_ALL, "en_GB.UTF-8");
   tzset();
   pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, NULL);
@@ -192,6 +194,7 @@ void* _sppc_thread_entry(void *closure) {
   // to from here, and running on a null unsafe stack is not an option, so
   // this is one of the few places the runtime gives up outright.
   if (_unsafe_stack_wanted && sppc_unsafe_stack_up() != 0) { abort(); }
+  _sppc_bt_altstack_up();
 
   call.fn(call.env);
   free(call.env);
@@ -200,6 +203,7 @@ void* _sppc_thread_entry(void *closure) {
   // thread's, this one is worth handing back: a process that spawns
   // threads for its lifetime would otherwise accumulate one mapping each.
   sppc_unsafe_stack_down();
+  _sppc_bt_altstack_down();
   return NULL;
 }
 
