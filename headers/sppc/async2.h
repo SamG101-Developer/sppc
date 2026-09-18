@@ -126,6 +126,15 @@ typedef struct gt_ring {
   unsigned inflight;
 } gt_ring;
 
+/// A task waiting on a thread lock held by another task on the
+/// same thread. It lives on the waiting task's own stack, for
+/// exactly as long as the wait.
+typedef struct gt_lock_waiter {
+  void const *lock;
+  gt_task *task;
+  struct gt_lock_waiter *next;
+} gt_lock_waiter;
+
 /// The single thread-local asynchronous runtime that handles all
 /// the task management, stacks, switching etc.
 typedef struct gt_runtime {
@@ -144,6 +153,10 @@ typedef struct gt_runtime {
   size_t cached_size;
   int inited;
   gt_ring ring;
+
+  // Tasks waiting on a thread lock, oldest first, so an unlock
+  // can hand the lock to the one that has waited longest.
+  gt_lock_waiter *lock_waiters;
 } gt_runtime;
 
 extern _Thread_local gt_runtime _gt_R;
@@ -838,17 +851,74 @@ int _gt_passed(const clockid_t clock, struct timespec const *deadline) {
   return left.tv_sec == 0 && left.tv_nsec == 0;
 }
 
+/// Take a task off the run queue, if it is on it.
+_gnu_inline _gnu_nonnull(1)
+int _gt_rq_remove(gt_task *t) {
+  gt_task *prev = NULL;
+  for (auto cur = _gt_R.rq_head; cur != NULL; prev = cur, cur = cur->next) {
+    if (cur != t) { continue; }
+    if (prev) { prev->next = cur->next; }
+    else { _gt_R.rq_head = cur->next; }
+    if (_gt_R.rq_tail == cur) { _gt_R.rq_tail = prev; }
+    cur->next = NULL;
+    return 1;
+  }
+  return 0;
+}
+
+_gnu_inline _gnu_nonnull(1)
+void _gt_lock_wait_add(gt_lock_waiter *w) {
+  auto link = &_gt_R.lock_waiters;
+  while (*link != NULL) { link = &(*link)->next; }
+  w->next = NULL;
+  *link = w;
+}
+
+_gnu_inline _gnu_nonnull(1)
+void _gt_lock_wait_remove(gt_lock_waiter *w) {
+  for (auto link = &_gt_R.lock_waiters; *link != NULL; link = &(*link)->next) {
+    if (*link == w) {
+      *link = w->next;
+      return;
+    }
+  }
+}
+
+/// Called just after a thread lock is released. Without it the
+/// releasing task takes the lock straight back on its next use -
+/// a waiting task only sits on the run queue, and cannot try
+/// again until something yields to it - so one task can hold a
+/// shared lock for its whole run. Running the longest waiter
+/// now, ahead of the releaser, lets it take the lock first. The
+/// lock itself is not handed over: the waiter takes it as usual,
+/// and a thread that got there first still wins.
+_gnu_inline _gnu_nonnull(1)
+void _gt_lock_released(void const *lock) {
+  if (!_gt_R.inited || _gt_R.lock_waiters == NULL) { return; }
+  for (auto w = _gt_R.lock_waiters; w != NULL; w = w->next) {
+    if (w->lock != lock || w->task->state != GT_STATE_READY) { continue; }
+    if (!_gt_rq_remove(w->task)) { continue; }
+    _gt_rq_push(_gt_R.current);
+    _gt_switch_to(w->task);
+    return;
+  }
+}
+
 /// Take a thread lock from a task. The holder may be a task on
 /// this very thread, parked on the ring, and a blocking lock
 /// would stop the only thread that can resume it. So a
 /// contended lock lets the rest of the thread move - the holder
 /// included, once its operation has completed - and only blocks
 /// the thread when nothing else on it can, as the holder is
-/// then on another. The three calls are the non-blocking try,
-/// the blocking lock and the timed lock for one kind of lock;
-/// a deadline, if given, is absolute.
-#define _gt_lock_until(try_call, lock_call, timed_call, clock, deadline) ({            \
+/// then on another. While it waits, the task is queued on the
+/// lock so a release on this thread runs it next. The three
+/// calls are the non-blocking try, the blocking lock and the
+/// timed lock for one kind of lock; a deadline, if given, is
+/// absolute.
+#define _gt_lock_until(lock, try_call, lock_call, timed_call, clock, deadline) ({      \
   int err_;                                                                            \
+  gt_lock_waiter waiter_ = {(lock), _gt_R.current, NULL};                              \
+  int queued_ = 0;                                                                     \
   for (;;) {                                                                           \
     err_ = (try_call);                                                                 \
     if (err_ != EBUSY) { break; }                                                      \
@@ -860,13 +930,18 @@ int _gt_passed(const clockid_t clock, struct timespec const *deadline) {
       err_ = ETIMEDOUT;                                                                \
       break;                                                                           \
     }                                                                                  \
+    if (!queued_) {                                                                    \
+      _gt_lock_wait_add(&waiter_);                                                     \
+      queued_ = 1;                                                                     \
+    }                                                                                  \
     _gt_step((clock), (deadline));                                                     \
   }                                                                                    \
+  if (queued_) { _gt_lock_wait_remove(&waiter_); }                                     \
   err_; })
 
 _gnu_inline _gnu_nonnull(1)
 int _gt_mutex_lock_until(pthread_mutex_t *mutex, const clockid_t clock, struct timespec const *deadline) {
-  return _gt_lock_until(
+  return _gt_lock_until(mutex,
     pthread_mutex_trylock(mutex), pthread_mutex_lock(mutex),
     pthread_mutex_clocklock(mutex, clock, deadline), clock, deadline);
 }
@@ -877,26 +952,47 @@ int _gt_mutex_lock(pthread_mutex_t *mutex) {
 }
 
 _gnu_inline _gnu_nonnull(1)
+int _gt_mutex_unlock(pthread_mutex_t *mutex) {
+  const auto err = pthread_mutex_unlock(mutex);
+  if (err == 0) { _gt_lock_released(mutex); }
+  return err;
+}
+
+_gnu_inline _gnu_nonnull(1)
 int _gt_rwlock_rdlock_until(pthread_rwlock_t *rwlock, const clockid_t clock, struct timespec const *deadline) {
-  return _gt_lock_until(
+  return _gt_lock_until(rwlock,
     pthread_rwlock_tryrdlock(rwlock), pthread_rwlock_rdlock(rwlock),
     pthread_rwlock_clockrdlock(rwlock, clock, deadline), clock, deadline);
 }
 
 _gnu_inline _gnu_nonnull(1)
 int _gt_rwlock_wrlock_until(pthread_rwlock_t *rwlock, const clockid_t clock, struct timespec const *deadline) {
-  return _gt_lock_until(
+  return _gt_lock_until(rwlock,
     pthread_rwlock_trywrlock(rwlock), pthread_rwlock_wrlock(rwlock),
     pthread_rwlock_clockwrlock(rwlock, clock, deadline), clock, deadline);
+}
+
+_gnu_inline _gnu_nonnull(1)
+int _gt_rwlock_unlock(pthread_rwlock_t *rwlock) {
+  const auto err = pthread_rwlock_unlock(rwlock);
+  if (err == 0) { _gt_lock_released(rwlock); }
+  return err;
 }
 
 /// A spin lock has no timed form, and no deadline is ever
 /// passed here, so the timed call is never made.
 _gnu_inline _gnu_nonnull(1)
 int _gt_spin_lock(pthread_spinlock_t *spinlock) {
-  return _gt_lock_until(
+  return _gt_lock_until((void const*)spinlock,
     pthread_spin_trylock(spinlock), pthread_spin_lock(spinlock),
     pthread_spin_lock(spinlock), CLOCK_MONOTONIC, (struct timespec const*)NULL);
+}
+
+_gnu_inline _gnu_nonnull(1)
+int _gt_spin_unlock(pthread_spinlock_t *spinlock) {
+  const auto err = pthread_spin_unlock(spinlock);
+  if (err == 0) { _gt_lock_released((void const*)spinlock); }
+  return err;
 }
 
 /// Wait on a condition from a task. If only another thread
@@ -913,9 +1009,12 @@ int _gt_cond_wait_until(pthread_cond_t *cond, pthread_mutex_t *mutex, const cloc
     return deadline ? pthread_cond_clockwait(cond, mutex, clock, deadline) : pthread_cond_wait(cond, mutex);
   }
 
-  const auto uerr = pthread_mutex_unlock(mutex);
+  // Releasing may already run a task waiting on the mutex; the
+  // step after it still lets the rest of the thread move, the
+  // signaller included, before the lock is taken back.
+  const auto uerr = _gt_mutex_unlock(mutex);
   if (uerr != 0) { return uerr; }
-  _gt_step(clock, deadline);
+  if (_gt_has_other_work()) { _gt_step(clock, deadline); }
 
   // The mutex is held again on the way out whatever happened,
   // as a real wait would leave it, so no deadline applies here.

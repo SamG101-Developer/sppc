@@ -272,7 +272,7 @@ _sppc_api int sppc_pthread_mutex_trylock(uint64_t const *restrict mutex) {
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_mutex_unlock(uint64_t const *restrict mutex) {
-  _extract_err pthread_mutex_unlock(_pthread_handle(pthread_mutex_t, mutex));
+  _extract_err _gt_mutex_unlock(_pthread_handle(pthread_mutex_t, mutex));
   _return_normalized_pthread_err
 }
 
@@ -407,7 +407,7 @@ _sppc_api int sppc_pthread_rwlock_clockwrlock(uint64_t const *restrict rwlock, c
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_rwlock_unlock(uint64_t const *restrict rwlock) {
-  _extract_err pthread_rwlock_unlock(_pthread_handle(pthread_rwlock_t, rwlock));
+  _extract_err _gt_rwlock_unlock(_pthread_handle(pthread_rwlock_t, rwlock));
   _return_normalized_pthread_err
 }
 
@@ -462,7 +462,7 @@ _sppc_api int sppc_pthread_spin_trylock(uint64_t const *restrict spinlock) {
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_spin_unlock(uint64_t const *restrict spinlock) {
-  _extract_err pthread_spin_unlock((pthread_spinlock_t*)spinlock);
+  _extract_err _gt_spin_unlock((pthread_spinlock_t*)spinlock);
   _return_normalized_pthread_err
 }
 

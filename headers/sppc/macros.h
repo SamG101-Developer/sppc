@@ -29,7 +29,7 @@
 #define _return_if_guarded_err(mutex, call)             \
   _return_if_pthread_err(_gt_mutex_lock(mutex))         \
   const auto rc_ = (call);                              \
-  _return_if_pthread_err(pthread_mutex_unlock(mutex))   \
+  _return_if_pthread_err(_gt_mutex_unlock(mutex))       \
   if (rc_ != 0) { return rc_; }
 #define _return_special_error(errno_val, return_val) if (err == errno_val) { return return_val; }
 #define _return_pointer return err;
