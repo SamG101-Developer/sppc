@@ -251,22 +251,22 @@ _sppc_api int sppc_pthread_mutex_init_recursive(uint64_t *restrict out) {
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_mutex_lock(uint64_t const *restrict mutex) {
-  _extract_err pthread_mutex_lock(_pthread_handle(pthread_mutex_t, mutex));
+  _extract_err _gt_mutex_lock(_pthread_handle(pthread_mutex_t, mutex));
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 3)
 _sppc_api int sppc_pthread_mutex_clocklock(uint64_t const *restrict mutex, const clockid_t clock,
   struct timespec const *restrict duration) {
-  _extract_err pthread_mutex_clocklock(_pthread_handle(pthread_mutex_t, mutex), clock, duration);
-  _return_special_error(ETIMEDOUT, 1)
+  struct timespec deadline;
+  _gt_deadline(clock, duration, &deadline);
+  _extract_err _gt_mutex_lock_until(_pthread_handle(pthread_mutex_t, mutex), clock, &deadline);
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_mutex_trylock(uint64_t const *restrict mutex) {
   _extract_err pthread_mutex_trylock(_pthread_handle(pthread_mutex_t, mutex));
-  _return_special_error(EBUSY, 1)
   _return_normalized_pthread_err
 }
 
@@ -317,20 +317,22 @@ _sppc_api int sppc_pthread_cond_init(uint64_t *restrict out) {
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2)
 _sppc_api int sppc_pthread_cond_wait(uint64_t const *restrict cond, uint64_t const *restrict mutex) {
-  _extract_err pthread_cond_wait(
+  _extract_err _gt_cond_wait_until(
     _pthread_handle(pthread_cond_t, cond),
-    _pthread_handle(pthread_mutex_t, mutex));
+    _pthread_handle(pthread_mutex_t, mutex),
+    CLOCK_MONOTONIC, NULL);
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(read_only, 4)
 _sppc_api int sppc_pthread_cond_clockwait(uint64_t const *restrict cond, uint64_t const *restrict mutex,
   const clockid_t clock, struct timespec const *restrict duration) {
-  _extract_err pthread_cond_clockwait(
+  struct timespec deadline;
+  _gt_deadline(clock, duration, &deadline);
+  _extract_err _gt_cond_wait_until(
     _pthread_handle(pthread_cond_t, cond),
     _pthread_handle(pthread_mutex_t, mutex),
-    clock, duration);
-  _return_special_error(ETIMEDOUT, 1)
+    clock, &deadline);
   _return_normalized_pthread_err
 }
 
@@ -363,43 +365,43 @@ _sppc_api int sppc_pthread_rwlock_init(uint64_t *restrict rwlock) {
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_rwlock_rdlock(uint64_t const *restrict rwlock) {
-  _extract_err pthread_rwlock_rdlock(_pthread_handle(pthread_rwlock_t, rwlock));
+  _extract_err _gt_rwlock_rdlock_until(_pthread_handle(pthread_rwlock_t, rwlock), CLOCK_MONOTONIC, NULL);
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_rwlock_tryrdlock(uint64_t const *restrict rwlock) {
   _extract_err pthread_rwlock_tryrdlock(_pthread_handle(pthread_rwlock_t, rwlock));
-  _return_special_error(EBUSY, 1)
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 3)
 _sppc_api int sppc_pthread_rwlock_clockrdlock(uint64_t const *restrict rwlock, const clockid_t clock,
   struct timespec const *restrict duration) {
-  _extract_err pthread_rwlock_clockrdlock(_pthread_handle(pthread_rwlock_t, rwlock), clock, duration);
-  _return_special_error(ETIMEDOUT, 1)
+  struct timespec deadline;
+  _gt_deadline(clock, duration, &deadline);
+  _extract_err _gt_rwlock_rdlock_until(_pthread_handle(pthread_rwlock_t, rwlock), clock, &deadline);
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_rwlock_wrlock(uint64_t const *restrict rwlock) {
-  _extract_err pthread_rwlock_wrlock(_pthread_handle(pthread_rwlock_t, rwlock));
+  _extract_err _gt_rwlock_wrlock_until(_pthread_handle(pthread_rwlock_t, rwlock), CLOCK_MONOTONIC, NULL);
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_rwlock_trywrlock(uint64_t const *restrict rwlock) {
   _extract_err pthread_rwlock_trywrlock(_pthread_handle(pthread_rwlock_t, rwlock));
-  _return_special_error(EBUSY, 1)
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 3)
 _sppc_api int sppc_pthread_rwlock_clockwrlock(uint64_t const *restrict rwlock, const clockid_t clock,
   struct timespec const *restrict duration) {
-  _extract_err pthread_rwlock_clockwrlock(_pthread_handle(pthread_rwlock_t, rwlock), clock, duration);
-  _return_special_error(ETIMEDOUT, 1)
+  struct timespec deadline;
+  _gt_deadline(clock, duration, &deadline);
+  _extract_err _gt_rwlock_wrlock_until(_pthread_handle(pthread_rwlock_t, rwlock), clock, &deadline);
   _return_normalized_pthread_err
 }
 
@@ -448,14 +450,13 @@ _sppc_api int sppc_pthread_spin_init(uint64_t *restrict spinlock) {
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_spin_lock(uint64_t const *restrict spinlock) {
-  _extract_err pthread_spin_lock((pthread_spinlock_t*)spinlock);
+  _extract_err _gt_spin_lock((pthread_spinlock_t*)spinlock);
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_spin_trylock(uint64_t const *restrict spinlock) {
   _extract_err pthread_spin_trylock((pthread_spinlock_t*)spinlock);
-  _return_special_error(EBUSY, 1)
   _return_normalized_pthread_err
 }
 
@@ -1045,7 +1046,8 @@ _sppc_api int sppc_clock_gettime(const clockid_t clock_id, struct timespec *rest
 _posix_syscall(230)
 _gnu_inline _gnu_restrict_access(read_only, 3) _gnu_nonnull(3)
 _sppc_api int sppc_clock_nanosleep(const clockid_t clock, const int flags, struct timespec const *restrict duration) {
-  _extract_err clock_nanosleep(clock, flags, duration, NULL);
+  _extract_err_async(int, _gt_try_sleep(clock, flags, duration, &_async_res),
+    ({ const int e_ = clock_nanosleep(clock, flags, duration, NULL); e_ != 0 ? (errno = e_, -1) : 0; }))
   _return_normalized_err
 }
 

@@ -24,9 +24,11 @@
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <linux/io_uring.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -759,6 +761,169 @@ void _gt_yield(void) {
   _gt_switch_to(next);
 }
 
+// ==================== THREAD PRIMITIVES ====================
+
+/// Turn a relative timeout on "clock" into the absolute
+/// deadline the pthread timed calls take.
+_gnu_inline _gnu_nonnull(2, 3)
+void _gt_deadline(const clockid_t clock, struct timespec const *timeout, struct timespec *out) {
+  clock_gettime(clock, out);
+  out->tv_sec += timeout->tv_sec;
+  out->tv_nsec += timeout->tv_nsec;
+  if (out->tv_nsec >= 1000000000L) {
+    out->tv_sec += 1;
+    out->tv_nsec -= 1000000000L;
+  }
+}
+
+/// The time left until an absolute deadline, or zero if it
+/// has passed.
+_gnu_inline _gnu_nonnull(2)
+struct timespec _gt_remaining(const clockid_t clock, struct timespec const *deadline) {
+  struct timespec now;
+  clock_gettime(clock, &now);
+  struct timespec left = {deadline->tv_sec - now.tv_sec, deadline->tv_nsec - now.tv_nsec};
+  if (left.tv_nsec < 0) {
+    left.tv_sec -= 1;
+    left.tv_nsec += 1000000000L;
+  }
+  if (left.tv_sec < 0) { left = (struct timespec){0, 0}; }
+  return left;
+}
+
+/// Whether anything on this thread other than the current
+/// task can make progress: a task ready to run, or one parked
+/// on the ring.
+_gnu_inline
+int _gt_has_other_work(void) {
+  if (!_gt_R.inited) { return 0; }
+  if (_gt_R.ring.inflight) { _gt_io_poll(0); }
+  return _gt_R.rq_head != NULL || _gt_R.ring.inflight != 0;
+}
+
+/// Let the rest of this thread move while the current task
+/// cannot: run a ready task, or wait on the ring for one to
+/// become ready - no later than "deadline" if one is given.
+/// Only call this once "_gt_has_other_work" has said yes.
+_gnu_inline
+void _gt_step(const clockid_t clock, struct timespec const *deadline) {
+  const auto next = _gt_rq_pop();
+  if (next) {
+    _gt_rq_push(_gt_R.current);
+    _gt_switch_to(next);
+    return;
+  }
+  if (deadline == NULL) {
+    _gt_io_poll(1);
+    return;
+  }
+
+  // A bounded wait on the ring. The timeout rides in the
+  // extended argument, which is relative and measured on the
+  // monotonic clock - close enough for a deadline read on
+  // another, since the caller checks the deadline again.
+  const auto left = _gt_remaining(clock, deadline);
+  struct __kernel_timespec ts = {left.tv_sec, left.tv_nsec};
+  struct io_uring_getevents_arg arg;
+  memset(&arg, 0, sizeof arg);
+  arg.ts = (uint64_t)(uintptr_t)&ts;
+  syscall(__NR_io_uring_enter, _gt_R.ring.fd, 0, 1, IORING_ENTER_GETEVENTS | IORING_ENTER_EXT_ARG, &arg, sizeof arg);
+  _gt_io_poll(0);
+}
+
+/// Whether an absolute deadline has passed.
+_gnu_inline _gnu_nonnull(2)
+int _gt_passed(const clockid_t clock, struct timespec const *deadline) {
+  const auto left = _gt_remaining(clock, deadline);
+  return left.tv_sec == 0 && left.tv_nsec == 0;
+}
+
+/// Take a thread lock from a task. The holder may be a task on
+/// this very thread, parked on the ring, and a blocking lock
+/// would stop the only thread that can resume it. So a
+/// contended lock lets the rest of the thread move - the holder
+/// included, once its operation has completed - and only blocks
+/// the thread when nothing else on it can, as the holder is
+/// then on another. The three calls are the non-blocking try,
+/// the blocking lock and the timed lock for one kind of lock;
+/// a deadline, if given, is absolute.
+#define _gt_lock_until(try_call, lock_call, timed_call, clock, deadline) ({            \
+  int err_;                                                                            \
+  for (;;) {                                                                           \
+    err_ = (try_call);                                                                 \
+    if (err_ != EBUSY) { break; }                                                      \
+    if (!_gt_has_other_work()) {                                                       \
+      err_ = (deadline) ? (timed_call) : (lock_call);                                  \
+      break;                                                                           \
+    }                                                                                  \
+    if ((deadline) && _gt_passed((clock), (deadline))) {                               \
+      err_ = ETIMEDOUT;                                                                \
+      break;                                                                           \
+    }                                                                                  \
+    _gt_step((clock), (deadline));                                                     \
+  }                                                                                    \
+  err_; })
+
+_gnu_inline _gnu_nonnull(1)
+int _gt_mutex_lock_until(pthread_mutex_t *mutex, const clockid_t clock, struct timespec const *deadline) {
+  return _gt_lock_until(
+    pthread_mutex_trylock(mutex), pthread_mutex_lock(mutex),
+    pthread_mutex_clocklock(mutex, clock, deadline), clock, deadline);
+}
+
+_gnu_inline _gnu_nonnull(1)
+int _gt_mutex_lock(pthread_mutex_t *mutex) {
+  return _gt_mutex_lock_until(mutex, CLOCK_MONOTONIC, NULL);
+}
+
+_gnu_inline _gnu_nonnull(1)
+int _gt_rwlock_rdlock_until(pthread_rwlock_t *rwlock, const clockid_t clock, struct timespec const *deadline) {
+  return _gt_lock_until(
+    pthread_rwlock_tryrdlock(rwlock), pthread_rwlock_rdlock(rwlock),
+    pthread_rwlock_clockrdlock(rwlock, clock, deadline), clock, deadline);
+}
+
+_gnu_inline _gnu_nonnull(1)
+int _gt_rwlock_wrlock_until(pthread_rwlock_t *rwlock, const clockid_t clock, struct timespec const *deadline) {
+  return _gt_lock_until(
+    pthread_rwlock_trywrlock(rwlock), pthread_rwlock_wrlock(rwlock),
+    pthread_rwlock_clockwrlock(rwlock, clock, deadline), clock, deadline);
+}
+
+/// A spin lock has no timed form, and no deadline is ever
+/// passed here, so the timed call is never made.
+_gnu_inline _gnu_nonnull(1)
+int _gt_spin_lock(pthread_spinlock_t *spinlock) {
+  return _gt_lock_until(
+    pthread_spin_trylock(spinlock), pthread_spin_lock(spinlock),
+    pthread_spin_lock(spinlock), CLOCK_MONOTONIC, (struct timespec const*)NULL);
+}
+
+/// Wait on a condition from a task. If only another thread
+/// can signal, the real wait is right. If a task on this thread
+/// might, a real wait would stop it for good - so the mutex is
+/// dropped, the thread moves on, and this returns as a spurious
+/// wake-up. Condition waits are allowed those, and every caller
+/// re-checks its predicate under the lock anyway. A deadline,
+/// if given, is absolute.
+_gnu_inline _gnu_nonnull(1, 2)
+int _gt_cond_wait_until(pthread_cond_t *cond, pthread_mutex_t *mutex, const clockid_t clock,
+  struct timespec const *deadline) {
+  if (!_gt_has_other_work()) {
+    return deadline ? pthread_cond_clockwait(cond, mutex, clock, deadline) : pthread_cond_wait(cond, mutex);
+  }
+
+  const auto uerr = pthread_mutex_unlock(mutex);
+  if (uerr != 0) { return uerr; }
+  _gt_step(clock, deadline);
+
+  // The mutex is held again on the way out whatever happened,
+  // as a real wait would leave it, so no deadline applies here.
+  const auto lerr = _gt_mutex_lock(mutex);
+  if (lerr != 0) { return lerr; }
+  return deadline && _gt_passed(clock, deadline) ? ETIMEDOUT : 0;
+}
+
 /// Wait for a task to finish. The value it produced is not
 /// read here as it is already in the cell the caller gave the
 /// closure; so this only has to make the wait happen and
@@ -955,19 +1120,27 @@ int _gt_try_fsync(const int fd, int *res) {
 
 /// Sleeping is the one case where the plain call is NOT
 /// the right fallback on a task: it would stop every other
-/// task for the duration. A timeout expiring normally
-/// reports -ETIME, which is success here.
-_gnu_inline _gnu_nonnull(3)
-int _gt_try_sleep(const int64_t secs, const int64_t nanos, int *res) {
+/// task for the duration. An absolute deadline and the clock
+/// it is read from carry over as timeout flags. A clock the
+/// ring cannot time against falls back to the plain call -
+/// checked before taking a submission entry, which could not
+/// be handed back. A timeout expiring normally reports -ETIME,
+/// which is success here.
+_gnu_inline _gnu_nonnull(3, 4)
+int _gt_try_sleep(const clockid_t clock, const int flags, struct timespec const *duration, int *res) {
+  if (clock != CLOCK_MONOTONIC && clock != CLOCK_REALTIME && clock != CLOCK_BOOTTIME) { return 0; }
   _gt_io_begin(sqe)
   const auto self = _gt_R.current;
-  self->ts.tv_sec = secs;
-  self->ts.tv_nsec = nanos;
+  self->ts.tv_sec = duration->tv_sec;
+  self->ts.tv_nsec = duration->tv_nsec;
 
   sqe->opcode = IORING_OP_TIMEOUT;
   sqe->addr = (uint64_t)(uintptr_t)&self->ts;
   sqe->len = 1;
   sqe->off = 0;
+  sqe->timeout_flags =
+    ((flags & TIMER_ABSTIME) ? IORING_TIMEOUT_ABS : 0u) |
+    (clock == CLOCK_REALTIME ? IORING_TIMEOUT_REALTIME : clock == CLOCK_BOOTTIME ? IORING_TIMEOUT_BOOTTIME : 0u);
 
   const auto r = _gt_io_wait(sqe);
   if (r == -ETIME || r == 0) {

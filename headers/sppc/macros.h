@@ -27,7 +27,7 @@
 #define _return_normalized_pthread_err return err;
 #define _return_if_pthread_err(call) { const auto err_ = (call); if (err_ != 0) { return err_; } }
 #define _return_if_guarded_err(mutex, call)             \
-  _return_if_pthread_err(pthread_mutex_lock(mutex))     \
+  _return_if_pthread_err(_gt_mutex_lock(mutex))         \
   const auto rc_ = (call);                              \
   _return_if_pthread_err(pthread_mutex_unlock(mutex))   \
   if (rc_ != 0) { return rc_; }
