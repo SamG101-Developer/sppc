@@ -16,6 +16,7 @@
 
 #include <dlfcn.h>
 #include <elf.h>
+#include <errno.h>
 #include <execinfo.h>
 #include <fcntl.h>
 #include <link.h>
@@ -60,8 +61,52 @@ static const int _sppc_bt_signals[] = {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP,
 
 // ==================== OUTPUT ====================
 
+// The report is built up here and written in one call, so that other threads
+// still printing cannot land between its pieces. Only the first fatal signal
+// reports ("_sppc_bt_busy"), so one static buffer is enough; a report longer
+// than it is cut off rather than split.
+static char _sppc_bt_buf[64 * 1024];
+static size_t _sppc_bt_len = 0;
+
+static void _sppc_bt_put_n(char const *s, size_t n) {
+  const auto room = sizeof _sppc_bt_buf - _sppc_bt_len;
+  const auto take = n < room ? n : room;
+  memcpy(_sppc_bt_buf + _sppc_bt_len, s, take);
+  _sppc_bt_len += take;
+}
+
 static void _sppc_bt_put(char const *s) {
-  if (write(STDERR_FILENO, s, strlen(s)) < 0) {}
+  _sppc_bt_put_n(s, strlen(s));
+}
+
+/// An s++ symbol ends in "$h" and a 16 hex digit hash of its signature, which
+/// keeps overloads apart but is noise in a backtrace. Anything else is printed
+/// whole.
+static void _sppc_bt_put_symbol(char const *name) {
+  const auto n = strlen(name);
+  if (n >= 18 && name[n - 18] == '$' && name[n - 17] == 'h') {
+    auto all_hex = true;
+    for (auto i = n - 16; i < n; ++i) {
+      const auto c = name[i];
+      all_hex = all_hex && ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
+    }
+    if (all_hex) {
+      _sppc_bt_put_n(name, n - 18);
+      return;
+    }
+  }
+  _sppc_bt_put(name);
+}
+
+static void _sppc_bt_flush(void) {
+  auto done = (size_t)0;
+  while (done < _sppc_bt_len) {
+    const auto w = write(STDERR_FILENO, _sppc_bt_buf + done, _sppc_bt_len - done);
+    if (w < 0 && errno == EINTR) { continue; }
+    if (w <= 0) { break; }
+    done += (size_t)w;
+  }
+  _sppc_bt_len = 0;
 }
 
 static void _sppc_bt_put_hex(uintptr_t v) {
@@ -266,7 +311,7 @@ static void _sppc_bt_print(void const *fault_pc) {
     _sppc_bt_put_dec(i - start);
     _sppc_bt_put(i - start < 10 ? "  " : " ");
     if (name != NULL) {
-      _sppc_bt_put(name);
+      _sppc_bt_put_symbol(name);
       _sppc_bt_put("+");
       _sppc_bt_put_hex(pc - sym_start);
     }
@@ -285,23 +330,28 @@ static void _sppc_bt_print(void const *fault_pc) {
 }
 
 static void _sppc_bt_handler(const int sig, siginfo_t *info, void *uctx) {
-  // Only the first fatal signal reports. "SA_RESETHAND" has already put the
-  // default action back, so any other thread faulting now just dies.
-  if (!atomic_flag_test_and_set(&_sppc_bt_busy)) {
-    _sppc_bt_put("\n[sppc] fatal signal: ");
-    _sppc_bt_put(_sppc_bt_signal_name(sig));
-    if (sig == SIGSEGV || sig == SIGBUS) {
-      _sppc_bt_put(" at address ");
-      _sppc_bt_put_hex((uintptr_t)info->si_addr);
-    }
-    _sppc_bt_put("\n");
-    if (_sppc_bt_enabled) { _sppc_bt_print(_sppc_bt_context_pc(uctx)); }
-    else { _sppc_bt_put("note: backtraces are off because SPP_BACKTRACE=0\n"); }
+  // Only the first fatal signal reports. Any other thread arriving here while
+  // it does waits rather than dying: dying ends the process, cutting the
+  // report off before it is written. The reporter ends the process for both.
+  if (atomic_flag_test_and_set(&_sppc_bt_busy)) {
+    for (;;) { pause(); }
   }
+
+  _sppc_bt_put("\n[sppc] fatal signal: ");
+  _sppc_bt_put(_sppc_bt_signal_name(sig));
+  if (sig == SIGSEGV || sig == SIGBUS) {
+    _sppc_bt_put(" at address ");
+    _sppc_bt_put_hex((uintptr_t)info->si_addr);
+  }
+  _sppc_bt_put("\n");
+  if (_sppc_bt_enabled) { _sppc_bt_print(_sppc_bt_context_pc(uctx)); }
+  else { _sppc_bt_put("note: backtraces are off because SPP_BACKTRACE=0\n"); }
+  _sppc_bt_flush();
 
   // Blocked until the handler returns, then delivered with the default
   // action. Returning alone would do for a fault, which re-executes and
   // faults again, but not for a signal sent from outside.
+  signal(sig, SIG_DFL);
   raise(sig);
 }
 
@@ -351,8 +401,14 @@ static void _sppc_bt_install(void) {
 
   struct sigaction sa = {0};
   sa.sa_sigaction = _sppc_bt_handler;
-  sa.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_RESETHAND;
+  // Not "SA_RESETHAND": a second thread faulting would then take the default
+  // action and end the process mid-report. The fatal signals are blocked while
+  // the handler runs instead, so one raised inside it still ends the process.
+  sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
   sigemptyset(&sa.sa_mask);
+  for (size_t i = 0; i < sizeof _sppc_bt_signals / sizeof *_sppc_bt_signals; ++i) {
+    sigaddset(&sa.sa_mask, _sppc_bt_signals[i]);
+  }
 
   // Only over the default action: a sanitizer or a debugging harness that
   // has put its own handler in place keeps it.
