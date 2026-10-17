@@ -1,0 +1,189 @@
+# After a merge to master: build and test sppc on every
+# target again, then open (or update) a PR into spp-stl
+# carrying the ready targets' binaries and, if the api
+# changed, the regenerated bindings. Only merged code ever
+# reaches the stl.
+#
+# spp-stl's layout: one stub for every platform (sppc owns
+# its types and constants, so the bindings are the same
+# everywhere), and one folder of binaries per target, named
+# <arch>-<os>-<toolchain> (the targets are in _build.yaml):
+#
+#   ffi/sppc/stub.spp
+#   ffi/sppc/x86_64-linux-gnu/libsppc.so
+#   ffi/sppc/aarch64-linux-gnu/libsppc.so
+#   ffi/sppc/x86_64-macos-clang/libsppc.dylib
+#   ffi/sppc/aarch64-macos-clang/libsppc.dylib
+#   ffi/sppc/x86_64-windows-msvc/[sppc.dll, sppc.lib]
+#
+# "Up to date" is decided from the sources, not by comparing
+# binaries (a rebuilt library differs byte for byte whenever
+# a runner's toolchain does): ffi/sppc/SOURCE in spp-stl
+# records the git tree hashes of everything the libraries and
+# the stub are built from, and which targets were shipped. If
+# both match, there is nothing to do; a target newly marked
+# ready changes it.
+#
+# Needs the secret SPP_STL_TOKEN: a fine-grained token for
+# spp-stl with "Contents" and "Pull requests" read/write.
+# GITHUB_TOKEN cannot push to another repository, and a PR it
+# opened would not run spp-stl's checks.
+
+name: Post-merge
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch: { }
+
+permissions: { }
+
+# Queued, never cancelled: a bump cut short could leave the
+# stl branch pushed without its PR updated.
+concurrency:
+  group: post-merge
+  cancel-in-progress: false
+
+env:
+  STL_REPO: SamG101-Developer/spp-stl
+  STL_BRANCH: sppc/bump-binary
+
+jobs:
+  build:
+    name: Build
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_build.yaml
+    with:
+      upload: ${{ github.ref == 'refs/heads/master' }}
+
+  bump:
+    name: Bump spp-stl
+    needs: [ build ]
+    # A manual run can be started on any branch; only master's
+    # code reaches the stl.
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      # Egress on audit until its endpoints are known; it
+      # needs no sudo.
+      - name: Harden Runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
+        with:
+          egress-policy: audit
+          disable-sudo: true
+
+      - name: Checkout sppc
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Keeps its credentials, unlike every other checkout:
+      # the bump pushes to spp-stl with them.
+      - name: Checkout spp-stl
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: ${{ env.STL_REPO }}
+          token: ${{ secrets.SPP_STL_TOKEN }}
+          path: stl
+
+      # Every artifact there is, which is exactly the ready
+      # targets': only they upload.
+      - name: Download the ready targets' binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          pattern: sppc-*
+          path: artifacts
+
+      - name: Check whether spp-stl is up to date
+        id: check
+        run: |
+          ready=$(cd artifacts && ls -d sppc-* | sed 's/^sppc-//' | sort | tr '\n' ' ' | sed 's/ $//')
+          if [ -z "$ready" ]; then echo "::error::no target is ready"; exit 1; fi
+          echo "ready=$ready" >> "$GITHUB_OUTPUT"
+          stamp=$( { git rev-parse HEAD:headers HEAD:sources HEAD:CMakeLists.txt HEAD:tools/main.py; echo "$ready"; } | sha1sum | cut -d' ' -f1)
+          echo "stamp=$stamp" >> "$GITHUB_OUTPUT"
+          recorded=$(sed -n 's/^stamp: //p' stl/ffi/sppc/SOURCE 2>/dev/null || true)
+          if [ "$stamp" = "$recorded" ]; then
+            echo "spp-stl already has the binaries and bindings for these sources and targets."
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Not the runner's own Python: Ubuntu's refuses a plain
+      # "pip install" into it.
+      - name: Install Python
+        if: steps.check.outputs.stale == 'true'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Install the generator
+        if: steps.check.outputs.stale == 'true'
+        # Pinned so the stub only changes when the headers do,
+        # not when libclang's output does.
+        run: pip install "libclang==18.1.1"
+
+      - name: Update binaries and bindings
+        if: steps.check.outputs.stale == 'true'
+        id: update
+        run: |
+          # Each ready target's folder, made if it is not there,
+          # holding exactly what its build uploaded.
+          for target in ${{ steps.check.outputs.ready }}; do
+            dir="stl/ffi/sppc/$target"
+            rm -rf "$dir"
+            mkdir -p "$dir"
+            cp "artifacts/sppc-$target/"* "$dir/"
+          done
+          # The flat layout this replaces.
+          rm -f stl/ffi/sppc/libsppc.so
+
+          python tools/main.py headers/sppc/sppc.h -I headers --prefix sppc_ \
+            --closure-type sppc_closure --constants --constants-root headers/sppc/types.h \
+            -o stl/ffi/sppc/stub.spp
+          printf 'commit: %s\nstamp: %s\ntargets: %s\n' \
+            "$GITHUB_SHA" "${{ steps.check.outputs.stamp }}" "${{ steps.check.outputs.ready }}" > stl/ffi/sppc/SOURCE
+
+          if git -C stl diff --quiet -- ffi/sppc/stub.spp; then
+            echo "bindings=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "bindings=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update the spp-stl PR
+        if: steps.check.outputs.stale == 'true'
+        working-directory: stl
+        env:
+          GH_TOKEN: ${{ secrets.SPP_STL_TOKEN }}
+          BINDINGS: ${{ steps.update.outputs.bindings }}
+          READY: ${{ steps.check.outputs.ready }}
+        run: |
+          short=${GITHUB_SHA::7}
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$STL_BRANCH"
+          git add -A ffi/sppc
+          git commit -m "Bump sppc to $short"
+          # One standing PR: a later merge replaces the branch
+          # rather than opening another.
+          git push --force origin "$STL_BRANCH"
+
+          if [ "$BINDINGS" = "true" ]; then
+            what="the regenerated \`ffi/sppc/stub.spp\` (the api changed: check the stl's callers) and rebuilt binaries"
+          else
+            what="rebuilt binaries (bindings unchanged)"
+          fi
+          targets=$(for t in $READY; do printf -- '- `%s`\n' "$t"; done)
+          body=$(printf 'Bumps sppc to %s: %s, for:\n\n%s\n\nEach was built in Release on its own runner, and sppc'"'"'s tests passed there.' \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA" "$what" "$targets")
+
+          if [ -n "$(gh pr list --repo "$STL_REPO" --head "$STL_BRANCH" --state open --json number --jq '.[].number')" ]; then
+            gh pr edit "$STL_BRANCH" --repo "$STL_REPO" --body "$body"
+          else
+            gh pr create --repo "$STL_REPO" --base master --head "$STL_BRANCH" --title "$STL_BRANCH" --body "$body"
+          fi
