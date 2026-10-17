@@ -429,6 +429,15 @@ int _gt_passed(const clockid_t clock, struct timespec const *deadline) {
   return left.tv_sec == 0 && left.tv_nsec == 0;
 }
 
+/// "_gt_passed" for a deadline that may be absent, which never
+/// passes. Separate so a caller that has none can pass NULL
+/// without the call to "_gt_passed" being spelt with it: some
+/// gcc versions flag that call even where it cannot be reached.
+_gnu_inline
+int _gt_passed_if_any(const clockid_t clock, struct timespec const *deadline) {
+  return deadline != NULL && _gt_passed(clock, deadline);
+}
+
 /// Take a task off the run queue, if it is on it.
 _gnu_inline _gnu_nonnull(1)
 int _gt_rq_remove(gt_task *t) {
@@ -505,7 +514,7 @@ void _gt_lock_released(void const *lock) {
       (err_out) = (deadline) ? (timed_call) : (lock_call);                             \
       break;                                                                           \
     }                                                                                  \
-    if ((deadline) && _gt_passed((clock), (deadline))) {                               \
+    if (_gt_passed_if_any((clock), (deadline))) {                                      \
       (err_out) = ETIMEDOUT;                                                           \
       break;                                                                           \
     }                                                                                  \
