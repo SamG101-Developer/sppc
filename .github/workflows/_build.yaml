@@ -1,0 +1,102 @@
+# Build and test sppc on every target, each on its own
+# runner. Called by pr.yaml (to check) and post_merge.yaml
+# (to check, then ship).
+#
+# The targets live here, in one place. "target" names the
+# folder spp-stl keeps that target's binaries in
+# (<arch>-<os>-<toolchain>), "files" what goes in it. Every
+# target builds every time, so a port's progress shows, but
+# only a "ready" one counts: an unready target may fail
+# without failing the build, and never uploads, so it is
+# never shipped.
+
+name: build
+
+on:
+  workflow_call:
+    inputs:
+      upload:
+        description: "Upload each ready target's binaries, as sppc-<target>, for shipping."
+        required: false
+        type: boolean
+        default: false
+
+permissions: { }
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    continue-on-error: ${{ !matrix.ready }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-linux-gnu,    os: ubuntu-24.04,     compiler: gcc,   ready: true,  files: libsppc.so }
+          - { target: aarch64-linux-gnu,   os: ubuntu-24.04-arm, compiler: gcc,   ready: true,  files: libsppc.so }
+          - { target: x86_64-macos-clang,  os: macos-15-intel,   compiler: clang, ready: false, files: libsppc.dylib }
+          - { target: aarch64-macos-clang, os: macos-15,         compiler: clang, ready: false, files: libsppc.dylib }
+          - { target: x86_64-windows-msvc, os: windows-latest,   compiler: msvc,  ready: false, files: sppc.dll sppc.lib }
+
+    # Windows otherwise defaults "run" to PowerShell.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The action is Linux-only, so the Windows and macOS
+      # targets go without it. Todo: Egress stays on audit
+      # until its endpoints are known.
+      - name: Harden Runner
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
+        with:
+          egress-policy: audit
+          disable-sudo: true
+
+      - name: Checkout sppc
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Install cmake
+        run: pip install "cmake>=4.1"
+
+      - name: Set up msvc
+        if: matrix.compiler == 'msvc'
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756  # v1.13.0
+
+      - name: Build (Release)
+        run: |
+          if [ "${{ matrix.compiler }}" != msvc ]; then export CC=${{ matrix.compiler }}; fi
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build --build-config Release --output-on-failure
+
+      - name: Collect the binaries
+        run: |
+          mkdir -p dist
+          for f in ${{ matrix.files }}; do
+            found=$(find build -name "$f" -type f | head -n 1)
+            if [ -z "$found" ]; then echo "::error::$f was not built"; exit 1; fi
+            cp "$found" dist/
+          done
+          ls -l dist
+
+      - name: Upload the binaries
+        if: inputs.upload && matrix.ready
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: sppc-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1

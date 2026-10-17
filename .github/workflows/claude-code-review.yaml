@@ -15,13 +15,13 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 1
 
       - name: Run Claude Code Review
         id: claude-review
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@56cf60fde42f7b19c3abfd5c9c48b69a1288461f  # v1.0.222
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'

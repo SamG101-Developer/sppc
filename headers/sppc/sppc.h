@@ -1,12 +1,8 @@
-/**
- * Safety guarantees from S++
- *   * All "out" integers will be 0 by default.
- *   * All pointers will be non-null, initialised.
- */
-
-/// The public api. Everything is defined in the files included here, chosen
-/// for the platform at compile time: the async runtime, crash reporting, and
-/// the platform layer that implements the "sppc_*" functions themselves.
+/// The public api. Everything is defined in the files
+/// included here, chosen for the platform at compile
+/// time: the async runtime, crash reporting, and the
+/// platform layer that implements the "sppc_*" functions
+/// themselves.
 
 #pragma once
 #ifndef _GNU_SOURCE

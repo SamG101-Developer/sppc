@@ -1,0 +1,23 @@
+# Keeps the actions the workflows pin by commit SHA up to
+# date: each update is a PR moving the SHA and its "# vX"
+# comment together, and goes through pr.yaml like any other.
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: daily
+      time: "04:00"
+
+    # A release has a week to be found broken (or pulled)
+    # before it is proposed here.
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+    labels: [ dependencies, ci ]
+    groups:
+      github-actions:
+        patterns: [ "*" ]

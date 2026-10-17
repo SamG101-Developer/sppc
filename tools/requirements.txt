@@ -1,0 +1,2 @@
+libclang>=16
+pyperclip  # optional, for --copy

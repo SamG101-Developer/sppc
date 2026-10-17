@@ -1,0 +1,62 @@
+# On a PR into master: build and test sppc on every target,
+# so a change that breaks one is seen before it is merged.
+# Nothing is shipped from here; post_merge.yaml does that,
+# from master only.
+
+name: PR
+
+on:
+  pull_request:
+    branches: [ master ]
+    types: [ opened, synchronize, reopened ]
+  workflow_dispatch: { }
+
+permissions: { }
+
+concurrency:
+  # One group per PR branch / dispatch ref: a push to a PR
+  # replaces its run still in progress.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_build.yaml
+
+  # One of the two required status checks for branch
+  # protection, the other being "PR Title Format" from
+  # pr_title.yaml. The unready targets show red on their own
+  # while their ports are in progress, but they are
+  # "continue-on-error", so they do not fail "build" and
+  # never block a merge here.
+  ci-success:
+    name: CI Success
+    if: ${{ always() }}
+    needs: [ build ]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: { }
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
+        with:
+          egress-policy: block
+          disable-sudo: true
+          allowed-endpoints: >
+            api.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+
+      # Inline: a script would need a checkout, and this job
+      # holds no "contents: read".
+      - name: Verify all required jobs passed
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          echo "One or more required jobs did not succeed:"
+          echo "$NEEDS_JSON"
+          exit 1
