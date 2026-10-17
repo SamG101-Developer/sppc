@@ -263,7 +263,7 @@ inline void _sppc_bt_handler(const int sig, siginfo_t *info, void *uctx) {
   }
   _sppc_bt_put("\n");
   if (_sppc_bt_enabled) { _sppc_bt_print(_sppc_bt_context_pc(uctx), true); }
-  else { _sppc_bt_put("note: backtraces are off because SPP_BACKTRACE=0\n"); }
+  else { _sppc_bt_put(_sppc_bt_off_note); }
   _sppc_bt_flush();
 
   // Blocked until the handler returns, then delivered with the default
@@ -298,7 +298,7 @@ inline void _sppc_bt_fail_begin(void) {
 _gnu_cold _gnu_noreturn
 inline void _sppc_bt_fail_end(void const *caller_pc) {
   if (_sppc_bt_enabled) { _sppc_bt_print(caller_pc, false); }
-  else { _sppc_bt_put("note: backtraces are off because SPP_BACKTRACE=0\n"); }
+  else { _sppc_bt_put(_sppc_bt_off_note); }
   _sppc_bt_flush();
   _exit(_SPPC_FAIL_STATUS);
 }
@@ -345,7 +345,9 @@ inline void _sppc_bt_install(void) {
   // and does not print its addresses to whoever started it: no backtrace
   // there, whatever SPP_BACKTRACE says.
   char *const env = secure_getenv("SPP_BACKTRACE");
-  _sppc_bt_enabled = getauxval(AT_SECURE) == 0 && (env == NULL || strcmp(env, "0") != 0);
+  const bool secure = getauxval(AT_SECURE) != 0;
+  _sppc_bt_enabled = !secure && (env == NULL || strcmp(env, "0") != 0);
+  if (secure) { _sppc_bt_off_note = "note: backtraces are off in a setuid/setgid process\n"; }
 
   // The first "backtrace" loads libgcc_s, which allocates. Done here, the
   // handler never has to.
