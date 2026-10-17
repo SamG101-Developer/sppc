@@ -12,6 +12,7 @@
 #endif
 
 #include <sppc/platform/posix.h>
+#include <sys/prctl.h>
 #include <sys/random.h>
 #include <sys/sendfile.h>
 
@@ -358,4 +359,28 @@ _sppc_api int sppc_copyfile(const int fd_in, const int fd_out, const size_t len,
   _extract_err(ssize_t) copy_file_range(fd_in, NULL, fd_out, NULL, len, 0);
   _sret_normalised_store(out_n)
   _return_normalized_err
+}
+
+// ==================== PROCESS HARDENING ====================
+
+// Older headers predate MDWE; the numbers are the kernel's ABI.
+#ifndef PR_SET_MDWE
+#define PR_SET_MDWE 65
+#endif
+#ifndef PR_MDWE_REFUSE_EXEC_GAIN
+#define PR_MDWE_REFUSE_EXEC_GAIN (1UL << 0)
+#endif
+#ifndef PR_MDWE_NO_INHERIT
+#define PR_MDWE_NO_INHERIT (1UL << 1)
+#endif
+
+_gnu_inline _gnu_cold
+_sppc_api int sppc_deny_wx(void) {
+  if (prctl(PR_SET_MDWE, PR_MDWE_REFUSE_EXEC_GAIN | PR_MDWE_NO_INHERIT, 0L, 0L, 0L) == 0) { return 0; }
+  const int err = errno;
+  fprintf(stderr,
+    "[sppc] could not deny writable-and-executable memory (PR_SET_MDWE needs Linux 6.6+): %s\n"
+    "  To run without it, set 'deny_wx = false' under [memory.map] in spp.toml and rebuild.\n",
+    strerror(err));
+  return err;
 }
