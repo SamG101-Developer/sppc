@@ -958,7 +958,7 @@ _sppc_api int sppc_memmem(void const *haystack, const size_t haystack_size, void
   const size_t needle_size, size_t *_sppc_restrict out) {
   _extract_err(void*) memmem(haystack, haystack_size, needle, needle_size);
   if (err != NULL) { *out = (size_t)((char*)err - (char*)haystack); }
-  _return_normalized_ptr_err
+  _return_found
 }
 
 // ==================== SYSCALLS ====================
@@ -1664,14 +1664,14 @@ _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 
 _sppc_api int sppc_strchr(char const *str, const char ch, size_t *_sppc_restrict out_idx) {
   _extract_err(char*) strchr(str, ch);
   if (err != NULL) { *out_idx = (size_t)(err - str); }
-  _return_normalized_ptr_err
+  _return_found
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 3) _gnu_nonnull(1, 3)
 _sppc_api int sppc_strrchr(char const *str, const char ch, size_t *_sppc_restrict out_idx) {
   _extract_err(char*) strrchr(str, ch);
   if (err != NULL) { *out_idx = (size_t)(err - str); }
-  _return_normalized_ptr_err
+  _return_found
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(write_only, 3)
@@ -1679,7 +1679,7 @@ _gnu_nonnull(1, 2, 3)
 _sppc_api int sppc_strstr(char const *haystack, char const *needle, size_t *_sppc_restrict out_idx) {
   _extract_err(char*) strstr(haystack, needle);
   if (err != NULL) { *out_idx = (size_t)(err - haystack); }
-  _return_normalized_ptr_err
+  _return_found
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(write_only, 3)
@@ -1687,7 +1687,7 @@ _gnu_nonnull(1, 2, 3)
 _sppc_api int sppc_strrstr(char const *haystack, char const *needle, size_t *_sppc_restrict out_idx) {
   _extract_err(char*) strrstr(haystack, needle);
   if (err != NULL) { *out_idx = (size_t)(err - haystack); }
-  _return_normalized_ptr_err
+  _return_found
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(write_only, 3)
@@ -1695,7 +1695,7 @@ _gnu_nonnull(1, 2, 3)
 _sppc_api int sppc_strcasestr(char const *haystack, char const *needle, size_t *_sppc_restrict out_idx) {
   _extract_err(char*) strcasestr(haystack, needle);
   if (err != NULL) { *out_idx = (size_t)(err - haystack); }
-  _return_normalized_ptr_err
+  _return_found
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(write_only, 3)
@@ -1703,7 +1703,7 @@ _gnu_nonnull(1, 2, 3)
 _sppc_api int sppc_strpbrk(char const *string, char const *accept, size_t *_sppc_restrict out_idx) {
   _extract_err(char*) strpbrk(string, accept);
   if (err != NULL) { *out_idx = (size_t)(err - string); }
-  _return_normalized_ptr_err
+  _return_found
 }
 
 _gnu_inline _gnu_malloc _gnu_restrict_access(read_only, 1) _gnu_nonnull(1)
@@ -1764,6 +1764,8 @@ enum {
   SPPC_CHECK_INDEX = 1, // a: the index, b: the length
   SPPC_CHECK_CONVERSION = 2,
   SPPC_CHECK_GENERATOR_SEND = 3,
+  SPPC_CHECK_SLICE_ORDER = 4, // a: the start, b: the end
+  SPPC_CHECK_SLICE_END = 5, // a: the end, b: the length
   SPPC_CHECK_SIGNED_ADD = 0x10,
   SPPC_CHECK_UNSIGNED_ADD = 0x11,
   SPPC_CHECK_SIGNED_SUB = 0x12,
@@ -1791,6 +1793,19 @@ _sppc_api void sppc_check_failed(const uint32_t check, const uint64_t a, const u
       break;
     case SPPC_CHECK_GENERATOR_SEND:
       _sppc_bt_put("generator 'send' was reached directly; it is lowered through the '.res()' operator");
+      break;
+    case SPPC_CHECK_SLICE_ORDER:
+      _sppc_bt_put("slice ");
+      _sppc_bt_put_dec((size_t)a);
+      _sppc_bt_put("..");
+      _sppc_bt_put_dec((size_t)b);
+      _sppc_bt_put(" ends before it starts");
+      break;
+    case SPPC_CHECK_SLICE_END:
+      _sppc_bt_put("slice end ");
+      _sppc_bt_put_dec((size_t)a);
+      _sppc_bt_put(" out of bounds for length ");
+      _sppc_bt_put_dec((size_t)b);
       break;
     case SPPC_CHECK_SIGNED_ADD: _sppc_bt_put("signed add overflowed");
       break;
@@ -1833,7 +1848,11 @@ _sppc_api void sppc_set_sockaddr_v6(uint16_t const *segments, const uint16_t por
   addr->sin6_port = htons(port);
   addr->sin6_flowinfo = 0;
   addr->sin6_scope_id = 0;
-  memcpy(&addr->sin6_addr.s6_addr, segments, 16);
+  // Segments arrive in host order, as the port does, and go out big-endian.
+  for (size_t i = 0; i < 8; ++i) {
+    addr->sin6_addr.s6_addr[2 * i] = (uint8_t)(segments[i] >> 8);
+    addr->sin6_addr.s6_addr[2 * i + 1] = (uint8_t)(segments[i] & 0xff);
+  }
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2) _gnu_restrict_access(write_only, 3)
@@ -1850,7 +1869,9 @@ _gnu_nonnull(1, 2, 3)
 _sppc_api void sppc_get_sockaddr_v6(sppc_sockaddr_storage const *_sppc_restrict storage, uint16_t *out_segments,
   uint16_t *out_port) {
   struct sockaddr_in6 const *const addr = (struct sockaddr_in6 const*)_sppc_os_sockaddr_const(storage);
-  memcpy(out_segments, &addr->sin6_addr.s6_addr, 16);
+  for (size_t i = 0; i < 8; ++i) {
+    out_segments[i] = (uint16_t)(addr->sin6_addr.s6_addr[2 * i] << 8 | addr->sin6_addr.s6_addr[2 * i + 1]);
+  }
   *out_port = ntohs(addr->sin6_port);
 }
 

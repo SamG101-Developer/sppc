@@ -4,6 +4,9 @@
   #include <TargetConditionals.h>
 #endif
 
+// Platform selection macro suite, which detects the current
+// operating system for os-specific code (file system, streams,
+// networking, etc).
 #define SPPC_PLATFORM_WINDOWS 0
 #define SPPC_PLATFORM_UNIX    0
 #define SPPC_PLATFORM_MACOS   0
@@ -30,12 +33,16 @@
   #error "SPPC: Unsupported platform"
 #endif
 
-// Platforms that share a kernel share everything that is the kernel's: io_uring,
-// the Linux syscalls and the ELF loader for Linux and Android; kqueue, Mach-O
-// and the Darwin libc for macOS and iOS. Code keyed on those uses these.
+// Platforms that share a kernel share everything that is the
+// kernel's: io_uring, the Linux syscalls and the ELF loader
+// for Linux and Android; kqueue, Mach-O and the Darwin libc
+// for macOS and iOS. Code keyed on those uses these.
 #define SPPC_KERNEL_LINUX  (SPPC_PLATFORM_UNIX || SPPC_PLATFORM_ANDROID)
 #define SPPC_KERNEL_DARWIN (SPPC_PLATFORM_MACOS || SPPC_PLATFORM_IOS)
 
+// Compiler selection macro suite, which detects the current
+// compiler for attribute-specifics (gnu::/clang:: attributes
+// like hot/cold and other optimizations).
 #define SPPC_CC_GCC   0
 #define SPPC_CC_CLANG 0
 #define SPPC_CC_MSVC  0
@@ -53,6 +60,10 @@
   #error "SPPC: Unsupported compiler"
 #endif
 
+
+// Architecture selection macro suite, which detects the current
+// architecture particularly for the async runtime environment,
+// which uses specialized assembly code.
 #define SPPC_ARCH_X86_64 0
 #define SPPC_ARCH_X86    0
 #define SPPC_ARCH_ARM64  0
@@ -74,6 +85,9 @@
   #error "SPPC: Unsupported architecture"
 #endif
 
+// ABI selection macro suite, which detects the current ABI
+// for the async runtime environment, which uses specialized
+// assembly code.
 #define SPPC_ABI_SYSV      0
 #define SPPC_ABI_WIN64     0
 #define SPPC_ABI_AAPCS64   0

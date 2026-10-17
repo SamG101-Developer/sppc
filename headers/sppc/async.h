@@ -20,8 +20,9 @@
 
 #include <sppc/config.h>
 
-// As in sppc.h: "inline" with "noinline" is deliberate on the runtime's cold
-// paths (one emitted copy, kept out of its callers), which gcc warns about.
+// As in sppc.h: "inline" with "noinline" is deliberate on the
+// runtime's cold paths (one emitted copy, kept out of its
+// callers), which gcc warns about.
 #if SPPC_CC_GCC || SPPC_CC_CLANG
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wattributes"
@@ -39,37 +40,38 @@
 
 // ==================== PUBLIC API ====================
 
+/// The body is a closure rather than a function and an argument
+/// list, which is what lets an s++ callable cross intact: its
+/// captures ride along in the environment, and its result goes
+/// to a cell the caller allocated and the closure captured.
 _gnu_inline _gnu_restrict_access(write_only, 1) _gnu_nonnull(1)
 _sppc_api int sppc_async(int *handle, const sppc_closure body) {
-  // The body is a closure rather than a function and an argument list, which
-  // is what lets an s++ callable cross intact: its captures ride along in the
-  // environment, and its result goes to a cell the caller allocated and the
-  // closure captured. A c variadic list could carry neither - the arguments
-  // after a pack would have to be passed as real varargs rather than
-  // collapsed into a tuple, and nothing here could know the size of what came
-  // back.
   const int err = _gt_spawn(handle, body, _gt_trampoline);
   if (err != 0) { free(body.env); }
   return err;
 }
 
+/// Nothing is returned but the error: the value the task produced
+/// is already in the caller's own cell by the time this returns.
 _gnu_inline
 _sppc_api int sppc_await(const int handle) {
-  // Nothing is returned but the error: the value the task produced is already
-  // in the caller's own cell by the time this returns.
   return _gt_await(handle);
 }
 
+/// Detach an asynchronous task by the handle.
 _gnu_inline
 _sppc_api int sppc_async_detach(const int handle) {
   return _gt_detach(handle);
 }
 
+/// Yield an asynchronous task.
 _gnu_inline
 _sppc_api void sppc_async_yield(void) {
   _gt_yield();
 }
 
+/// Simple setter for the stack size for asynchronous tasks' private
+/// stacks.
 _gnu_inline
 _sppc_api void sppc_async_stack_size(const size_t bytes) {
   _gt_init();
