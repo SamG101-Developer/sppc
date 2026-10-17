@@ -341,8 +341,11 @@ inline void _sppc_bt_install(void) {
   static const int signals[] = {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP, SIGABRT};
   const size_t nsignals = sizeof signals / sizeof *signals;
 
-  char *const env = getenv("SPP_BACKTRACE");
-  _sppc_bt_enabled = env == NULL || strcmp(env, "0") != 0;
+  // A setuid/setgid process (AT_SECURE) trusts nothing in its environment,
+  // and does not print its addresses to whoever started it: no backtrace
+  // there, whatever SPP_BACKTRACE says.
+  char *const env = secure_getenv("SPP_BACKTRACE");
+  _sppc_bt_enabled = getauxval(AT_SECURE) == 0 && (env == NULL || strcmp(env, "0") != 0);
 
   // The first "backtrace" loads libgcc_s, which allocates. Done here, the
   // handler never has to.
