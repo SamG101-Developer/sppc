@@ -1,16 +1,21 @@
-// The context switch for the System V x86_64 calling convention (Linux).
+// The context switch for the System V x86_64 calling convention (Linux, macOS).
 // Saves the callee-saved registers and the sse/x87 control words on the
 // current stack, stores the stack pointer through the first argument, loads
 // the next one from the second, and restores the same block from there.
 
 .text
   .p2align 4
-  .globl _gt_switch
+  .globl _SPPC_GT_SWITCH
   // Global so the runtime can call it, hidden so it never leaves the library.
-  .hidden _gt_switch
-  .type  _gt_switch, @function
+  // ELF also takes its type and size; Mach-O has neither.
+#if SPPC_KERNEL_DARWIN
+  .private_extern _SPPC_GT_SWITCH
+#else
+  .hidden _SPPC_GT_SWITCH
+  .type  _SPPC_GT_SWITCH, @function
+#endif
 
-_gt_switch:
+_SPPC_GT_SWITCH:
   push %rbp
   push %rbx
   push %r12
@@ -37,6 +42,9 @@ _gt_switch:
   pop  %rbp
   ret
 
-  .size _gt_switch, . - _gt_switch
+#if !SPPC_KERNEL_DARWIN
+  .size _SPPC_GT_SWITCH, . - _SPPC_GT_SWITCH
 
+// No executable stack wanted. Mach-O never gives one, so has no such note.
 .section .note.GNU-stack,"",@progbits
+#endif

@@ -1,16 +1,23 @@
-// The context switch for the AAPCS64 calling convention (Linux arm64).
+// The context switch for the AAPCS64 calling convention (Linux and macOS arm64;
+// Apple's variant keeps the same callee-saved registers, and x18, which it
+// reserves, is never touched here).
 // Saves x19-x30, d8-d15 and fpcr on the current stack, stores the stack
 // pointer through the first argument, loads the next one from the second,
 // and restores the same block from there.
 
 .text
   .p2align 4
-  .globl _gt_switch
+  .globl _SPPC_GT_SWITCH
   // Global so the runtime can call it, hidden so it never leaves the library.
-  .hidden _gt_switch
-  .type  _gt_switch, @function
+  // ELF also takes its type and size; Mach-O has neither.
+#if SPPC_KERNEL_DARWIN
+  .private_extern _SPPC_GT_SWITCH
+#else
+  .hidden _SPPC_GT_SWITCH
+  .type  _SPPC_GT_SWITCH, @function
+#endif
 
-_gt_switch:
+_SPPC_GT_SWITCH:
   sub  sp, sp, #176
   stp  x19, x20, [sp, #0]
   stp  x21, x22, [sp, #16]
@@ -45,6 +52,9 @@ _gt_switch:
   add  sp, sp, #176
   ret
 
-  .size _gt_switch, . - _gt_switch
+#if !SPPC_KERNEL_DARWIN
+  .size _SPPC_GT_SWITCH, . - _SPPC_GT_SWITCH
 
+// No executable stack wanted. Mach-O never gives one, so has no such note.
 .section .note.GNU-stack,"",@progbits
+#endif

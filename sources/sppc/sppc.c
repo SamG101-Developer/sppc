@@ -95,6 +95,7 @@ extern void sppc_async_stack_size(size_t bytes);
 extern int sppc_unsafe_stack_up(void);
 extern void sppc_unsafe_stack_down(void);
 extern int sppc_init(void);
+extern int sppc_deny_wx(void);
 extern int sppc_cleanup(void);
 extern int sppc_pthread_create(sppc_closure start_routine, uint64_t *_sppc_restrict out);
 extern int sppc_pthread_join(uint64_t const *_sppc_restrict handle);
