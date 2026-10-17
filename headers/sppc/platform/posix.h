@@ -1766,6 +1766,7 @@ enum {
   SPPC_CHECK_GENERATOR_SEND = 3,
   SPPC_CHECK_SLICE_ORDER = 4, // a: the start, b: the end
   SPPC_CHECK_SLICE_END = 5, // a: the end, b: the length
+  SPPC_CHECK_FLOAT_TO_INT = 6, // a: the integer's width, b: 1 if it is signed
   SPPC_CHECK_SIGNED_ADD = 0x10,
   SPPC_CHECK_UNSIGNED_ADD = 0x11,
   SPPC_CHECK_SIGNED_SUB = 0x12,
@@ -1806,6 +1807,12 @@ _sppc_api void sppc_check_failed(const uint32_t check, const uint64_t a, const u
       _sppc_bt_put_dec((size_t)a);
       _sppc_bt_put(" out of bounds for length ");
       _sppc_bt_put_dec((size_t)b);
+      break;
+    case SPPC_CHECK_FLOAT_TO_INT:
+      _sppc_bt_put("float out of range for ");
+      _sppc_bt_put(b != 0 ? "S" : "U");
+      _sppc_bt_put_dec((size_t)a);
+      _sppc_bt_put(", or NaN");
       break;
     case SPPC_CHECK_SIGNED_ADD: _sppc_bt_put("signed add overflowed");
       break;
