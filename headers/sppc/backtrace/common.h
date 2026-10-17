@@ -16,6 +16,7 @@
 // includes this its own copy of the state, and an inline function may not
 // refer to one at all.
 extern bool _sppc_bt_enabled;
+extern char const *_sppc_bt_off_note;
 extern _sppc_atomic_flag _sppc_bt_busy;
 
 // ==================== OUTPUT ====================
