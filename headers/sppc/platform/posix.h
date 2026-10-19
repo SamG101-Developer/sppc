@@ -73,6 +73,40 @@ char* strrstr(const char *_sppc_restrict haystack, const char *_sppc_restrict ne
   return last;
 }
 
+// "MAP_STACK" is a hint only Linux and the BSDs take.
+#if defined(MAP_STACK)
+  #define _SPPC_MAP_STACK MAP_STACK
+#else
+  #define _SPPC_MAP_STACK 0
+#endif
+
+/// "getenv", except in a setuid/setgid process, which trusts
+/// nothing in its environment and sees none of it. glibc has
+/// this as "secure_getenv".
+_gnu_inline _gnu_nonnull(1)
+char* _sppc_secure_getenv(char const *name) {
+#if defined(__GLIBC__)
+  return secure_getenv(name);
+#else
+  return issetugid() ? NULL : getenv(name);
+#endif
+}
+
+/// Make @p fd close on exec, and non-blocking if @p nonblock,
+/// for the calls that cannot be asked to do it as they make
+/// the descriptor (Darwin's "socket", "accept", "pipe").
+/// Another thread forking in between still inherits it; there
+/// is no closing that gap without the flags.
+_gnu_inline_va
+int _sppc_fd_set_flags(const int fd, const bool cloexec, const bool nonblock) {
+  if (cloexec && fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) { return -1; }
+  if (nonblock) {
+    const int fl = fcntl(fd, F_GETFL);
+    if (fl < 0 || fcntl(fd, F_SETFL, fl | O_NONBLOCK) != 0) { return -1; }
+  }
+  return 0;
+}
+
 // ==================== TRANSLATION ====================
 
 // The public api speaks sppc's types and constants (sppc/types.h); these turn
@@ -161,6 +195,9 @@ int _sppc_errno(const int err) {
 #if SPPC_KERNEL_LINUX
   // sppc's numbers are Linux's; platform/linux.h checks every one of them.
   return err;
+#elif SPPC_KERNEL_DARWIN
+  // A table, defined in platform/darwin.h ahead of this file.
+  return _sppc_errno_darwin(err);
 #else
 #error "sppc: no errno translation for this platform yet"
 #endif
@@ -411,10 +448,25 @@ _sppc_pair const* _sppc_sock_types_table(size_t *_sppc_restrict n) {
   return table;
 }
 
+// Darwin's "socket" and "socketpair" take neither flag. Two bits no socket
+// type uses stand in for them, and "_sppc_os_socket" applies them with
+// "fcntl" once the socket exists.
+#if defined(SOCK_NONBLOCK)
+  #define _SPPC_OS_SOCK_NONBLOCK SOCK_NONBLOCK
+  #define _SPPC_OS_SOCK_CLOEXEC SOCK_CLOEXEC
+  #define _SPPC_SOCK_FLAGS_BY_FCNTL 0
+#else
+  #define _SPPC_OS_SOCK_NONBLOCK 0x10000000
+  #define _SPPC_OS_SOCK_CLOEXEC 0x20000000
+  #define _SPPC_SOCK_FLAGS_BY_FCNTL 1
+#endif
+
 /// A socket type, with SOCK_NONBLOCK / SOCK_CLOEXEC or'd in.
 _gnu_inline _gnu_nonnull(2)
 int _sppc_to_os_sock_type(const int type, int *_sppc_restrict out) {
-  static const _sppc_pair flags[] = {_SPPC_PAIR(SOCK_NONBLOCK), _SPPC_PAIR(SOCK_CLOEXEC)};
+  static const _sppc_pair flags[] = {
+    {SPPC_SOCK_NONBLOCK, _SPPC_OS_SOCK_NONBLOCK}, {SPPC_SOCK_CLOEXEC, _SPPC_OS_SOCK_CLOEXEC},
+  };
   const int sppc_flags = type & (SPPC_SOCK_NONBLOCK | SPPC_SOCK_CLOEXEC);
   size_t n;
   _sppc_pair const *const types = _sppc_sock_types_table(&n);
@@ -456,6 +508,9 @@ int _sppc_to_os_sockopt(const int level, const int name, int *_sppc_restrict out
     _SPPC_PAIR(TCP_NODELAY), _SPPC_PAIR(TCP_MAXSEG),
 #ifdef TCP_KEEPIDLE
     _SPPC_PAIR(TCP_KEEPIDLE),
+#elif defined(TCP_KEEPALIVE)
+    // Darwin's name for it: idle seconds before the first probe.
+    {SPPC_TCP_KEEPIDLE, TCP_KEEPALIVE},
 #endif
 #ifdef TCP_KEEPINTVL
     _SPPC_PAIR(TCP_KEEPINTVL),
@@ -542,6 +597,12 @@ void _sppc_from_os_timeval(struct timeval const *_sppc_restrict in, sppc_timeval
   out->usec = in->tv_sec < 0 ? 0 : (uint64_t)in->tv_usec;
 }
 
+// Darwin has no "clock_nanosleep", so no TIMER_ABSTIME either; the one
+// platform/darwin.h builds reads this.
+#if SPPC_KERNEL_DARWIN && !defined(TIMER_ABSTIME)
+  #define TIMER_ABSTIME 1
+#endif
+
 /// "sppc_clock_nanosleep" flags.
 _gnu_inline _gnu_nonnull(2)
 int _sppc_to_os_timer_flags(const int flags, int *_sppc_restrict out) {
@@ -602,6 +663,8 @@ _sppc_api int sppc_unsafe_stack_up(void) {
     pthread_attr_getstack(&attr, &unused_base, &size);
     pthread_attr_destroy(&attr);
   }
+#elif SPPC_KERNEL_DARWIN
+  size = pthread_get_stacksize_np(pthread_self());
 #endif
 
   // Clamp the size around the provided minimum and maximum stack sizes,
@@ -617,7 +680,7 @@ _sppc_api int sppc_unsafe_stack_up(void) {
   // address space and only the part actually reached is ever paid for.
   void *const p = mmap(
     NULL, total, PROT_READ | PROT_WRITE,
-    MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_STACK, -1, 0);
+    MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | _SPPC_MAP_STACK, -1, 0);
   if (p == MAP_FAILED) { return _sppc_errno(errno); }
 
   // The guard goes at the low end, which is the end the stack grows
@@ -726,24 +789,24 @@ _sppc_api int sppc_pthread_create(const sppc_closure start_routine, uint64_t *_s
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_join(uint64_t const *_sppc_restrict handle) {
-  _extract_err(int) pthread_join((pthread_t)*handle, NULL);
+  _extract_err(int) pthread_join((pthread_t)(uintptr_t)*handle, NULL);
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_detach(uint64_t const *_sppc_restrict handle) {
-  _extract_err(int) pthread_detach((pthread_t)*handle);
+  _extract_err(int) pthread_detach((pthread_t)(uintptr_t)*handle);
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(write_only, 3)
 _sppc_api void sppc_pthread_equal(uint64_t const *handle1, uint64_t const *handle2, uint64_t *_sppc_restrict out) {
-  *out = pthread_equal((pthread_t)*handle1, (pthread_t)*handle2) != 0;
+  *out = pthread_equal((pthread_t)(uintptr_t)*handle1, (pthread_t)(uintptr_t)*handle2) != 0;
 }
 
 _gnu_inline _gnu_restrict_access(write_only, 1)
 _sppc_api void sppc_pthread_self(uint64_t *_sppc_restrict out) {
-  *out = pthread_self();
+  *out = (uint64_t)(uintptr_t)pthread_self();
 }
 
 _gnu_inline _gnu_restrict_access(write_only, 1)
@@ -888,6 +951,84 @@ _sppc_api int sppc_pthread_rwlock_destroy(uint64_t const *_sppc_restrict rwlock)
   pthread_rwlock_t *const obj = _pthread_handle(pthread_rwlock_t, rwlock);
   _extract_err(int) pthread_rwlock_destroy(obj);
   free(obj);
+  _return_normalized_pthread_err
+}
+
+_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 3)
+_sppc_api int sppc_pthread_mutex_clocklock(uint64_t const *_sppc_restrict mutex, const int clock,
+  sppc_timespec const *_sppc_restrict duration) {
+  clockid_t os_clock;
+  struct timespec os_duration, deadline;
+  if (_sppc_to_os_clock(clock, &os_clock) != 0 || _sppc_to_os_timespec(duration, &os_duration) != 0) { return SPPC_EINVAL; }
+  _gt_deadline(os_clock, &os_duration, &deadline);
+  _extract_err(int) _gt_mutex_lock_until(_pthread_handle(pthread_mutex_t, mutex), os_clock, &deadline);
+  _return_normalized_pthread_err
+}
+
+_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(read_only, 4)
+_sppc_api int sppc_pthread_cond_clockwait(uint64_t const *_sppc_restrict cond, uint64_t const *_sppc_restrict mutex,
+  const int clock, sppc_timespec const *_sppc_restrict duration) {
+  clockid_t os_clock;
+  struct timespec os_duration, deadline;
+  if (_sppc_to_os_clock(clock, &os_clock) != 0 || _sppc_to_os_timespec(duration, &os_duration) != 0) { return SPPC_EINVAL; }
+  _gt_deadline(os_clock, &os_duration, &deadline);
+  _extract_err(int) _gt_cond_wait_until(
+    _pthread_handle(pthread_cond_t, cond),
+    _pthread_handle(pthread_mutex_t, mutex),
+    os_clock, &deadline);
+  _return_normalized_pthread_err
+}
+
+_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 3)
+_sppc_api int sppc_pthread_rwlock_clockrdlock(uint64_t const *_sppc_restrict rwlock, const int clock,
+  sppc_timespec const *_sppc_restrict duration) {
+  clockid_t os_clock;
+  struct timespec os_duration, deadline;
+  if (_sppc_to_os_clock(clock, &os_clock) != 0 || _sppc_to_os_timespec(duration, &os_duration) != 0) { return SPPC_EINVAL; }
+  _gt_deadline(os_clock, &os_duration, &deadline);
+  _extract_err(int) _gt_rwlock_rdlock_until(_pthread_handle(pthread_rwlock_t, rwlock), os_clock, &deadline);
+  _return_normalized_pthread_err
+}
+
+_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 3)
+_sppc_api int sppc_pthread_rwlock_clockwrlock(uint64_t const *_sppc_restrict rwlock, const int clock,
+  sppc_timespec const *_sppc_restrict duration) {
+  clockid_t os_clock;
+  struct timespec os_duration, deadline;
+  if (_sppc_to_os_clock(clock, &os_clock) != 0 || _sppc_to_os_timespec(duration, &os_duration) != 0) { return SPPC_EINVAL; }
+  _gt_deadline(os_clock, &os_duration, &deadline);
+  _extract_err(int) _gt_rwlock_wrlock_until(_pthread_handle(pthread_rwlock_t, rwlock), os_clock, &deadline);
+  _return_normalized_pthread_err
+}
+
+_gnu_inline _gnu_restrict_access(write_only, 1)
+// As for "once": a spin lock is an int, so it lives in the handle rather than behind it.
+_sppc_api int sppc_pthread_spin_init(uint64_t *_sppc_restrict spinlock) {
+  _extract_err(int) _sppc_pthread_spin_init((_sppc_spinlock_t*)spinlock, 0);
+  _return_normalized_pthread_err
+}
+
+_gnu_inline _gnu_restrict_access(read_only, 1)
+_sppc_api int sppc_pthread_spin_lock(uint64_t const *_sppc_restrict spinlock) {
+  _extract_err(int) _gt_spin_lock((_sppc_spinlock_t*)spinlock);
+  _return_normalized_pthread_err
+}
+
+_gnu_inline _gnu_restrict_access(read_only, 1)
+_sppc_api int sppc_pthread_spin_trylock(uint64_t const *_sppc_restrict spinlock) {
+  _extract_err(int) _sppc_pthread_spin_trylock((_sppc_spinlock_t*)spinlock);
+  _return_normalized_pthread_err
+}
+
+_gnu_inline _gnu_restrict_access(read_only, 1)
+_sppc_api int sppc_pthread_spin_unlock(uint64_t const *_sppc_restrict spinlock) {
+  _extract_err(int) _gt_spin_unlock((_sppc_spinlock_t*)spinlock);
+  _return_normalized_pthread_err
+}
+
+_gnu_inline _gnu_restrict_access(read_only, 1)
+_sppc_api int sppc_pthread_spin_destroy(uint64_t const *_sppc_restrict spinlock) {
+  _extract_err(int) _sppc_pthread_spin_destroy((_sppc_spinlock_t*)spinlock);
   _return_normalized_pthread_err
 }
 
@@ -1240,6 +1381,26 @@ _sppc_api void sppc_get_pid(int32_t *_sppc_restrict out_pid) {
   *out_pid = (int32_t)getpid();
 }
 
+/// "socket", taking the stand-in flags of "_sppc_to_os_sock_type" where the
+/// platform's own does not take the real ones.
+_gnu_inline
+int _sppc_os_socket(const int domain, const int type, const int protocol) {
+#if _SPPC_SOCK_FLAGS_BY_FCNTL
+  const int flags = type & (_SPPC_OS_SOCK_NONBLOCK | _SPPC_OS_SOCK_CLOEXEC);
+  const int fd = socket(domain, type & ~flags, protocol);
+  if (fd < 0) { return -1; }
+  if (_sppc_fd_set_flags(fd, (flags & _SPPC_OS_SOCK_CLOEXEC) != 0, (flags & _SPPC_OS_SOCK_NONBLOCK) != 0) != 0) {
+    const int err = errno;
+    close(fd);
+    errno = err;
+    return -1;
+  }
+  return fd;
+#else
+  return socket(domain, type, protocol);
+#endif
+}
+
 _posix_syscall(41)
 _gnu_inline _gnu_restrict_access(write_only, 4) _gnu_nonnull(4)
 _sppc_api int sppc_socket(const int domain, const int type, const int protocol, int *_sppc_restrict out_fd) {
@@ -1250,7 +1411,7 @@ _sppc_api int sppc_socket(const int domain, const int type, const int protocol, 
     *out_fd = -1;
     return SPPC_EINVAL;
   }
-  _extract_err(int) socket(os_domain, os_type, protocol);
+  _extract_err(int) _sppc_os_socket(os_domain, os_type, protocol);
   _sret_normalised_store(out_fd)
   _return_normalized_err
 }
@@ -1428,8 +1589,7 @@ _sppc_api int sppc_fcntl_lock(const int fd, const int cmd, sppc_flock *_sppc_res
     return SPPC_EINVAL;
   }
 
-  struct flock fl;
-  memset(&fl, 0, sizeof fl);
+  struct flock fl = {0};
   fl.l_type = (short)os_type;
   fl.l_whence = (short)lock->whence;
   fl.l_start = (off_t)lock->start;
@@ -1715,7 +1875,7 @@ _sppc_api void* sppc_strdup(char const *str) {
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2, 3) _gnu_nonnull(1, 2)
 _sppc_api int sppc_getenv(char const *_sppc_restrict key, char *_sppc_restrict out, const size_t size) {
   if (size == 0) { return SPPC_ERANGE; }
-  _extract_err(char*) secure_getenv(key);
+  _extract_err(char*) _sppc_secure_getenv(key);
   if (err == NULL) {
     *out = '\0';
     return SPPC_ENOENT;
@@ -1843,12 +2003,24 @@ _sppc_api void sppc_check_failed(const uint32_t check, const uint64_t a, const u
 
 // ==================== SAFE SOCKETS ====================
 
+/// A port between host and network byte order, either way. Not "htons" /
+/// "ntohs": Darwin defines those through a static function, which an inline
+/// one with external linkage may not call (C17 6.7.4p3).
+_gnu_inline
+uint16_t _sppc_net16(const uint16_t v) {
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+  return v;
+#else
+  return (uint16_t)(v << 8 | v >> 8);
+#endif
+}
+
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 3) _gnu_nonnull(1, 3)
 _sppc_api void sppc_set_sockaddr_v4(uint8_t const *octets, const uint16_t port,
   sppc_sockaddr_storage *_sppc_restrict out_storage) {
   struct sockaddr_in *const addr = (struct sockaddr_in*)_sppc_os_sockaddr(out_storage);
   addr->sin_family = AF_INET;
-  addr->sin_port = htons(port);
+  addr->sin_port = _sppc_net16(port);
   memset(&addr->sin_zero, 0, sizeof(addr->sin_zero));
   memcpy(&addr->sin_addr.s_addr, octets, 4);
 }
@@ -1858,7 +2030,7 @@ _sppc_api void sppc_set_sockaddr_v6(uint16_t const *segments, const uint16_t por
   sppc_sockaddr_storage *_sppc_restrict out_storage) {
   struct sockaddr_in6 *const addr = (struct sockaddr_in6*)_sppc_os_sockaddr(out_storage);
   addr->sin6_family = AF_INET6;
-  addr->sin6_port = htons(port);
+  addr->sin6_port = _sppc_net16(port);
   addr->sin6_flowinfo = 0;
   addr->sin6_scope_id = 0;
   // Segments arrive in host order, as the port does, and go out big-endian.
@@ -1874,7 +2046,7 @@ _sppc_api void sppc_get_sockaddr_v4(sppc_sockaddr_storage const *_sppc_restrict 
   uint16_t *out_port) {
   struct sockaddr_in const *const addr = (struct sockaddr_in const*)_sppc_os_sockaddr_const(storage);
   memcpy(out_octets, &addr->sin_addr.s_addr, 4);
-  *out_port = ntohs(addr->sin_port);
+  *out_port = _sppc_net16(addr->sin_port);
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2) _gnu_restrict_access(write_only, 3)
@@ -1885,7 +2057,7 @@ _sppc_api void sppc_get_sockaddr_v6(sppc_sockaddr_storage const *_sppc_restrict 
   for (size_t i = 0; i < 8; ++i) {
     out_segments[i] = (uint16_t)(addr->sin6_addr.s6_addr[2 * i] << 8 | addr->sin6_addr.s6_addr[2 * i + 1]);
   }
-  *out_port = ntohs(addr->sin6_port);
+  *out_port = _sppc_net16(addr->sin6_port);
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2) _gnu_nonnull(1, 2)

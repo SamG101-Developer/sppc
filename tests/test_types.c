@@ -18,8 +18,18 @@ static void check_open_flags(void) {
     int os_ = -1; CHECK(_sppc_to_os_open_flags(SPPC_##name, &os_) == 0 && os_ == (name)); \
     CHECK(_sppc_from_os_open_flags(name) == SPPC_##name); } while (0)
   OPEN(O_RDONLY); OPEN(O_WRONLY); OPEN(O_RDWR); OPEN(O_CREAT); OPEN(O_EXCL); OPEN(O_NOCTTY); OPEN(O_TRUNC);
-  OPEN(O_APPEND); OPEN(O_NONBLOCK); OPEN(O_DSYNC); OPEN(O_ASYNC); OPEN(O_DIRECT); OPEN(O_DIRECTORY);
-  OPEN(O_NOFOLLOW); OPEN(O_NOATIME); OPEN(O_CLOEXEC); OPEN(O_SYNC); OPEN(O_PATH); OPEN(O_TMPFILE);
+  OPEN(O_APPEND); OPEN(O_NONBLOCK); OPEN(O_DSYNC); OPEN(O_ASYNC); OPEN(O_DIRECTORY);
+  OPEN(O_NOFOLLOW); OPEN(O_CLOEXEC); OPEN(O_SYNC);
+#if SPPC_KERNEL_LINUX
+  OPEN(O_DIRECT); OPEN(O_NOATIME); OPEN(O_PATH); OPEN(O_TMPFILE);
+#else
+  // Linux's own, which nothing else can honour, so they are refused.
+  int refused = 0;
+  CHECK(_sppc_to_os_open_flags(SPPC_O_DIRECT, &refused) == SPPC_EINVAL);
+  CHECK(_sppc_to_os_open_flags(SPPC_O_NOATIME, &refused) == SPPC_EINVAL);
+  CHECK(_sppc_to_os_open_flags(SPPC_O_PATH, &refused) == SPPC_EINVAL);
+  CHECK(_sppc_to_os_open_flags(SPPC_O_TMPFILE, &refused) == SPPC_EINVAL);
+#endif
 #undef OPEN
   // Several at once, including a multi-bit flag that contains another.
   int os = 0;
@@ -41,7 +51,7 @@ static void check_values(void) {
   TO_OS(_sppc_to_os_sock_type, SOCK_RAW); TO_OS(_sppc_to_os_sock_type, SOCK_SEQPACKET);
   int os = 0;
   CHECK(_sppc_to_os_sock_type(SPPC_SOCK_STREAM | SPPC_SOCK_NONBLOCK | SPPC_SOCK_CLOEXEC, &os) == 0);
-  CHECK(os == (SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC));
+  CHECK(os == (SOCK_STREAM | _SPPC_OS_SOCK_NONBLOCK | _SPPC_OS_SOCK_CLOEXEC));
   TO_OS(_sppc_to_os_msg_flags, MSG_OOB); TO_OS(_sppc_to_os_msg_flags, MSG_PEEK);
   TO_OS(_sppc_to_os_msg_flags, MSG_DONTROUTE); TO_OS(_sppc_to_os_msg_flags, MSG_TRUNC);
   TO_OS(_sppc_to_os_msg_flags, MSG_DONTWAIT); TO_OS(_sppc_to_os_msg_flags, MSG_WAITALL);
@@ -54,7 +64,10 @@ static void check_values(void) {
 
 #define CLOCK(name) do { clockid_t c_ = (clockid_t)-1; CHECK(_sppc_to_os_clock(SPPC_##name, &c_) == 0 && c_ == (name)); } while (0)
   CLOCK(CLOCK_REALTIME); CLOCK(CLOCK_MONOTONIC); CLOCK(CLOCK_PROCESS_CPUTIME_ID); CLOCK(CLOCK_THREAD_CPUTIME_ID);
-  CLOCK(CLOCK_MONOTONIC_RAW); CLOCK(CLOCK_REALTIME_COARSE); CLOCK(CLOCK_MONOTONIC_COARSE); CLOCK(CLOCK_BOOTTIME);
+  CLOCK(CLOCK_MONOTONIC_RAW);
+#if SPPC_KERNEL_LINUX
+  CLOCK(CLOCK_REALTIME_COARSE); CLOCK(CLOCK_MONOTONIC_COARSE); CLOCK(CLOCK_BOOTTIME);
+#endif
 #undef CLOCK
 
 #define SOCKOPT(level, name) do { int l_ = -1, n_ = -1; \
@@ -63,7 +76,13 @@ static void check_values(void) {
   SOCKOPT(SOL_SOCKET, SO_KEEPALIVE); SOCKOPT(SOL_SOCKET, SO_LINGER); SOCKOPT(SOL_SOCKET, SO_BROADCAST);
   SOCKOPT(SOL_SOCKET, SO_RCVTIMEO); SOCKOPT(SOL_SOCKET, SO_SNDTIMEO); SOCKOPT(SOL_SOCKET, SO_REUSEPORT);
   SOCKOPT(SOL_SOCKET, SO_SNDBUF); SOCKOPT(SOL_SOCKET, SO_RCVBUF); SOCKOPT(SOL_SOCKET, SO_ACCEPTCONN);
-  SOCKOPT(IPPROTO_TCP, TCP_NODELAY); SOCKOPT(IPPROTO_TCP, TCP_MAXSEG); SOCKOPT(IPPROTO_TCP, TCP_KEEPIDLE);
+  SOCKOPT(IPPROTO_TCP, TCP_NODELAY); SOCKOPT(IPPROTO_TCP, TCP_MAXSEG);
+#if defined(TCP_KEEPIDLE)
+  SOCKOPT(IPPROTO_TCP, TCP_KEEPIDLE);
+#else
+  { int l_ = -1, n_ = -1;
+    CHECK(_sppc_to_os_sockopt(SPPC_IPPROTO_TCP, SPPC_TCP_KEEPIDLE, &l_, &n_) == 0 && n_ == TCP_KEEPALIVE); }
+#endif
   SOCKOPT(IPPROTO_TCP, TCP_KEEPINTVL); SOCKOPT(IPPROTO_TCP, TCP_KEEPCNT);
   SOCKOPT(IPPROTO_IP, IP_TOS); SOCKOPT(IPPROTO_IP, IP_TTL); SOCKOPT(IPPROTO_IP, IP_MULTICAST_TTL);
   SOCKOPT(IPPROTO_IPV6, IPV6_V6ONLY); SOCKOPT(IPPROTO_IPV6, IPV6_UNICAST_HOPS);
@@ -81,6 +100,21 @@ static void check_values(void) {
   CHECK(_sppc_to_os_value(SPPC_F_WRLCK, t, n, &lk) == 0 && lk == F_WRLCK);
 
   CHECK(_sppc_errno(ENOENT) == SPPC_ENOENT && _sppc_errno(ETIMEDOUT) == SPPC_ETIMEDOUT);
+  CHECK(_sppc_errno(0) == 0);
+#if SPPC_KERNEL_DARWIN
+  // Every Darwin number becomes an sppc one, and none of them 0: the ones
+  // with a counterpart exactly, and the rest SPPC_EIO.
+  for (int e = 1; e <= ELAST; ++e) {
+    const int s = _sppc_errno(e);
+    CHECK(s > 0 && s <= SPPC_EHWPOISON);
+  }
+  CHECK(_sppc_errno(EAGAIN) == SPPC_EAGAIN && _sppc_errno(EWOULDBLOCK) == SPPC_EAGAIN);
+  CHECK(_sppc_errno(EDEADLK) == SPPC_EDEADLK && _sppc_errno(EINPROGRESS) == SPPC_EINPROGRESS);
+  CHECK(_sppc_errno(ECONNREFUSED) == SPPC_ECONNREFUSED && _sppc_errno(EOWNERDEAD) == SPPC_EOWNERDEAD);
+  CHECK(_sppc_errno(ENOTSUP) == SPPC_EOPNOTSUPP && _sppc_errno(EOPNOTSUPP) == SPPC_EOPNOTSUPP);
+  CHECK(_sppc_errno(ENOATTR) == SPPC_ENODATA && _sppc_errno(EBADARCH) == SPPC_ENOEXEC);
+  CHECK(_sppc_errno(EAUTH) == SPPC_EIO && _sppc_errno(ELAST + 1) == SPPC_EIO && _sppc_errno(-1) == SPPC_EIO);
+#endif
 }
 
 // ==================== REFUSALS ====================
@@ -126,7 +160,12 @@ static void check_files(void) {
   CHECK(sppc_fstat(fd, &st) == 0 && fstat(fd, &os_st) == 0);
   CHECK(st.size == 5 && st.ino == (uint64_t)os_st.st_ino && st.dev == (uint64_t)os_st.st_dev);
   CHECK((st.mode & SPPC_S_IFMT) == SPPC_S_IFREG && (st.mode & 07777) == (os_st.st_mode & 07777));
-  CHECK(st.mtim.sec == (uint64_t)os_st.st_mtim.tv_sec && st.mtim.nsec == (uint64_t)os_st.st_mtim.tv_nsec);
+#if SPPC_KERNEL_DARWIN
+  struct timespec const os_mtim = os_st.st_mtimespec;
+#else
+  struct timespec const os_mtim = os_st.st_mtim;
+#endif
+  CHECK(st.mtim.sec == (uint64_t)os_mtim.tv_sec && st.mtim.nsec == (uint64_t)os_mtim.tv_nsec);
   CHECK(st.nlink == 1 && st.uid == (uint32_t)os_st.st_uid && st.block_size == (int64_t)os_st.st_blksize);
   struct sppc_stat by_path;
   CHECK(sppc_stat(path, &by_path) == 0 && by_path.ino == st.ino);

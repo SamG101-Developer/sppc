@@ -2,10 +2,10 @@
 
 /// The parts of the public api that Linux implements with
 /// calls of its own, rather than the POSIX ones in
-/// platform/posix.h: glibc's clock-based pthread waits,
-/// barriers and spin locks, and the Linux syscalls ("pipe2",
-/// "accept4", "sendfile", "copy_file_range", "getrandom",
-/// ...). Darwin defines the same functions in platform/darwin.h.
+/// platform/posix.h: glibc's barriers, the Linux syscalls
+/// ("pipe2", "accept4", "sendfile", "copy_file_range",
+/// "getrandom", ...), and process hardening (MDWE, mseal).
+/// Darwin defines the same functions in platform/darwin.h.
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -25,9 +25,9 @@ _Static_assert(
 // ==================== ERRORS ====================
 
 // The sppc error numbers are Linux's, which is what lets
-// "_sppc_errno" return the platform's unchanged here. Every one
-// of them is checked; a mismatch is a compile error, not a
-// wrong error at run time.
+// "_sppc_errno" return the platform's unchanged here. Every
+// one of them is checked; a mismatch is a compile error,
+// not a wrong error at run time.
 #define _SPPC_ERRNO_DIFFERS "sppc: errno differs"
 _Static_assert(SPPC_EPERM == EPERM, _SPPC_ERRNO_DIFFERS);
 _Static_assert(SPPC_ENOENT == ENOENT, _SPPC_ERRNO_DIFFERS);
@@ -166,53 +166,6 @@ _Static_assert(SPPC_EHWPOISON == EHWPOISON, _SPPC_ERRNO_DIFFERS);
 
 // ==================== THREADING ====================
 
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 3)
-_sppc_api int sppc_pthread_mutex_clocklock(uint64_t const *_sppc_restrict mutex, const int clock,
-  sppc_timespec const *_sppc_restrict duration) {
-  clockid_t os_clock;
-  struct timespec os_duration, deadline;
-  if (_sppc_to_os_clock(clock, &os_clock) != 0 || _sppc_to_os_timespec(duration, &os_duration) != 0) { return SPPC_EINVAL; }
-  _gt_deadline(os_clock, &os_duration, &deadline);
-  _extract_err(int) _gt_mutex_lock_until(_pthread_handle(pthread_mutex_t, mutex), os_clock, &deadline);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(read_only, 4)
-_sppc_api int sppc_pthread_cond_clockwait(uint64_t const *_sppc_restrict cond, uint64_t const *_sppc_restrict mutex,
-  const int clock, sppc_timespec const *_sppc_restrict duration) {
-  clockid_t os_clock;
-  struct timespec os_duration, deadline;
-  if (_sppc_to_os_clock(clock, &os_clock) != 0 || _sppc_to_os_timespec(duration, &os_duration) != 0) { return SPPC_EINVAL; }
-  _gt_deadline(os_clock, &os_duration, &deadline);
-  _extract_err(int) _gt_cond_wait_until(
-    _pthread_handle(pthread_cond_t, cond),
-    _pthread_handle(pthread_mutex_t, mutex),
-    os_clock, &deadline);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 3)
-_sppc_api int sppc_pthread_rwlock_clockrdlock(uint64_t const *_sppc_restrict rwlock, const int clock,
-  sppc_timespec const *_sppc_restrict duration) {
-  clockid_t os_clock;
-  struct timespec os_duration, deadline;
-  if (_sppc_to_os_clock(clock, &os_clock) != 0 || _sppc_to_os_timespec(duration, &os_duration) != 0) { return SPPC_EINVAL; }
-  _gt_deadline(os_clock, &os_duration, &deadline);
-  _extract_err(int) _gt_rwlock_rdlock_until(_pthread_handle(pthread_rwlock_t, rwlock), os_clock, &deadline);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 3)
-_sppc_api int sppc_pthread_rwlock_clockwrlock(uint64_t const *_sppc_restrict rwlock, const int clock,
-  sppc_timespec const *_sppc_restrict duration) {
-  clockid_t os_clock;
-  struct timespec os_duration, deadline;
-  if (_sppc_to_os_clock(clock, &os_clock) != 0 || _sppc_to_os_timespec(duration, &os_duration) != 0) { return SPPC_EINVAL; }
-  _gt_deadline(os_clock, &os_duration, &deadline);
-  _extract_err(int) _gt_rwlock_wrlock_until(_pthread_handle(pthread_rwlock_t, rwlock), os_clock, &deadline);
-  _return_normalized_pthread_err
-}
-
 _gnu_inline _gnu_restrict_access(write_only, 1)
 _sppc_api int sppc_pthread_barrier_init(uint64_t *_sppc_restrict barrier, const uint64_t count) {
   _pthread_handle_alloc(pthread_barrier_t)
@@ -232,37 +185,6 @@ _sppc_api int sppc_pthread_barrier_destroy(uint64_t const *_sppc_restrict barrie
   pthread_barrier_t *const obj = _pthread_handle(pthread_barrier_t, barrier);
   _extract_err(int) pthread_barrier_destroy(obj);
   free(obj);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(write_only, 1)
-// As for "once": a "pthread_spinlock_t" is an int, so it lives in the handle rather than behind it.
-_sppc_api int sppc_pthread_spin_init(uint64_t *_sppc_restrict spinlock) {
-  _extract_err(int) pthread_spin_init((pthread_spinlock_t*)spinlock, 0);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_spin_lock(uint64_t const *_sppc_restrict spinlock) {
-  _extract_err(int) _gt_spin_lock((pthread_spinlock_t*)spinlock);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_spin_trylock(uint64_t const *_sppc_restrict spinlock) {
-  _extract_err(int) pthread_spin_trylock((pthread_spinlock_t*)spinlock);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_spin_unlock(uint64_t const *_sppc_restrict spinlock) {
-  _extract_err(int) _gt_spin_unlock((pthread_spinlock_t*)spinlock);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_spin_destroy(uint64_t const *_sppc_restrict spinlock) {
-  _extract_err(int) pthread_spin_destroy((pthread_spinlock_t*)spinlock);
   _return_normalized_pthread_err
 }
 

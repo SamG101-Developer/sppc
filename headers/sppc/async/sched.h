@@ -9,6 +9,7 @@
 #include <sppc/async/runtime.h>
 #include <sppc/async/vmem.h>
 #include <sppc/async/context.h>
+#include <sppc/platform/pthread_ext.h>
 #include <errno.h>
 #include <string.h>
 
@@ -533,7 +534,7 @@ int _gt_mutex_lock_until(pthread_mutex_t *mutex, const clockid_t clock, struct t
   int err;
   _gt_lock_until(err, mutex,
     pthread_mutex_trylock(mutex), pthread_mutex_lock(mutex),
-    pthread_mutex_clocklock(mutex, clock, deadline), clock, deadline);
+    _sppc_pthread_mutex_clocklock(mutex, clock, deadline), clock, deadline);
   return err;
 }
 
@@ -554,7 +555,7 @@ int _gt_rwlock_rdlock_until(pthread_rwlock_t *rwlock, const clockid_t clock, str
   int err;
   _gt_lock_until(err, rwlock,
     pthread_rwlock_tryrdlock(rwlock), pthread_rwlock_rdlock(rwlock),
-    pthread_rwlock_clockrdlock(rwlock, clock, deadline), clock, deadline);
+    _sppc_pthread_rwlock_clockrdlock(rwlock, clock, deadline), clock, deadline);
   return err;
 }
 
@@ -563,7 +564,7 @@ int _gt_rwlock_wrlock_until(pthread_rwlock_t *rwlock, const clockid_t clock, str
   int err;
   _gt_lock_until(err, rwlock,
     pthread_rwlock_trywrlock(rwlock), pthread_rwlock_wrlock(rwlock),
-    pthread_rwlock_clockwrlock(rwlock, clock, deadline), clock, deadline);
+    _sppc_pthread_rwlock_clockwrlock(rwlock, clock, deadline), clock, deadline);
   return err;
 }
 
@@ -577,17 +578,17 @@ int _gt_rwlock_unlock(pthread_rwlock_t *rwlock) {
 /// A spin lock has no timed form, and no deadline is ever
 /// passed here, so the timed call is never made.
 _gnu_inline _gnu_nonnull(1)
-int _gt_spin_lock(pthread_spinlock_t *spinlock) {
+int _gt_spin_lock(_sppc_spinlock_t *spinlock) {
   int err;
   _gt_lock_until(err, (void const*)spinlock,
-    pthread_spin_trylock(spinlock), pthread_spin_lock(spinlock),
-    pthread_spin_lock(spinlock), CLOCK_MONOTONIC, (struct timespec const*)NULL);
+    _sppc_pthread_spin_trylock(spinlock), _sppc_pthread_spin_lock(spinlock),
+    _sppc_pthread_spin_lock(spinlock), CLOCK_MONOTONIC, (struct timespec const*)NULL);
   return err;
 }
 
 _gnu_inline _gnu_nonnull(1)
-int _gt_spin_unlock(pthread_spinlock_t *spinlock) {
-  const int err = pthread_spin_unlock(spinlock);
+int _gt_spin_unlock(_sppc_spinlock_t *spinlock) {
+  const int err = _sppc_pthread_spin_unlock(spinlock);
   if (err == 0) { _gt_lock_released((void const*)spinlock); }
   return err;
 }
@@ -603,7 +604,7 @@ _gnu_inline _gnu_nonnull(1, 2)
 int _gt_cond_wait_until(pthread_cond_t *cond, pthread_mutex_t *mutex, const clockid_t clock,
   struct timespec const *deadline) {
   if (!_gt_has_other_work()) {
-    return deadline ? pthread_cond_clockwait(cond, mutex, clock, deadline) : pthread_cond_wait(cond, mutex);
+    return deadline ? _sppc_pthread_cond_clockwait(cond, mutex, clock, deadline) : pthread_cond_wait(cond, mutex);
   }
 
   // Releasing may already run a task waiting on the mutex; the

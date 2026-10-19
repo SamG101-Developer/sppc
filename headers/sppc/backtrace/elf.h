@@ -1,8 +1,8 @@
 #pragma once
 
-/// Crash reporting where executables are ELF and faults arrive as signals:
-/// Linux. Frames come from glibc's "backtrace", and names from each loaded
-/// object's own symbol table.
+/// Crash reporting's format half where executables are ELF: Linux. Frames
+/// come from glibc's "backtrace", and names from each loaded object's own
+/// symbol table, read from its file. The signal half is backtrace/posix.h.
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -14,16 +14,12 @@
 #include <execinfo.h>
 #include <fcntl.h>
 #include <link.h>
-#include <signal.h>
-#include <stdlib.h>
 #include <sys/auxv.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/ucontext.h>
 
-#define _SPPC_BT_MAX_FRAMES 128
 #define _SPPC_BT_MAX_OBJECTS 16
-#define _SPPC_BT_ALTSTACK_MIN (64 * 1024)
 
 /// One loaded object's symbol table, mapped from its file on
 /// first use and kept for the rest of the (short) life of the
@@ -35,31 +31,18 @@ typedef struct {
   size_t nsyms;
   char const *strtab;
   size_t strtab_size;
+  // The addresses of the object's control-flow-integrity traps
+  // (".kcfi_traps"): one 32-bit offset per trap, from the entry
+  // to the trap instruction. None without the section.
+  char const *cfi_traps;
+  uintptr_t cfi_traps_vaddr;
+  size_t ncfi_traps;
 } _sppc_bt_object;
 
 // Defined once, in sppc.c, as for the state in backtrace/common.h.
 extern _sppc_bt_object _sppc_bt_objects[_SPPC_BT_MAX_OBJECTS];
 extern size_t _sppc_bt_nobjects;
 extern void const *_sppc_bt_exe_base;
-
-extern _sppc_thread_local void *_sppc_bt_altstack;
-extern _sppc_thread_local size_t _sppc_bt_altstack_size;
-
-/// Stringify the signal integer with a brief description of
-/// the critical failure, which will form the header of the
-/// abort's backtrace.
-_gnu_cold
-inline char const* _sppc_bt_signal_name(const int sig) {
-  switch (sig) {
-    case SIGSEGV: return "SIGSEGV (segmentation fault)";
-    case SIGBUS: return "SIGBUS (bus error)";
-    case SIGILL: return "SIGILL (illegal instruction)";
-    case SIGFPE: return "SIGFPE (arithmetic exception)";
-    case SIGTRAP: return "SIGTRAP (trap)";
-    case SIGABRT: return "SIGABRT (aborted)";
-    default: return "unknown signal";
-  }
-}
 
 // ==================== SYMBOLS ====================
 
@@ -114,6 +97,23 @@ inline void _sppc_bt_load(_sppc_bt_object *obj, char const *path) {
   // Setup the section header, using the symbol table and
   // dynamic symbol table.
   ElfW(Shdr) const *const sh = (ElfW(Shdr) const*)(map + eh->e_shoff);
+
+  // The compiler's record of where its control-flow-integrity
+  // checks trap, found by name.
+  if (eh->e_shstrndx < eh->e_shnum && sh[eh->e_shstrndx].sh_offset + sh[eh->e_shstrndx].sh_size <= size) {
+    ElfW(Shdr) const *const names = &sh[eh->e_shstrndx];
+    for (size_t i = 0; i < eh->e_shnum; ++i) {
+      if (sh[i].sh_name >= names->sh_size || sh[i].sh_offset + sh[i].sh_size > size) { continue; }
+      if (strncmp(map + names->sh_offset + sh[i].sh_name, ".kcfi_traps", names->sh_size - sh[i].sh_name) != 0) {
+        continue;
+      }
+      obj->cfi_traps = map + sh[i].sh_offset;
+      obj->cfi_traps_vaddr = sh[i].sh_addr;
+      obj->ncfi_traps = sh[i].sh_size / sizeof(int32_t);
+      break;
+    }
+  }
+
   for (size_t t = 0; t < 2; ++t) {
     static const unsigned table_types[] = {SHT_SYMTAB, SHT_DYNSYM};
     const unsigned wanted = table_types[t];
@@ -145,6 +145,25 @@ inline _sppc_bt_object* _sppc_bt_object_for(Dl_info const *info) {
   const bool is_exe = info->dli_fbase == _sppc_bt_exe_base || info->dli_fname == NULL || info->dli_fname[0] != '/';
   _sppc_bt_load(obj, is_exe ? "/proc/self/exe" : info->dli_fname);
   return obj;
+}
+
+/// Whether @p pc is where a control-flow-integrity check traps (KCFI), as the
+/// compiler records in its object's ".kcfi_traps". Each entry is the offset from
+/// itself to the trap instruction, which is where the signal reports the fault.
+_gnu_cold
+inline bool _sppc_bt_is_cfi_trap(void const *pc) {
+  Dl_info info;
+  if (dladdr(pc, &info) == 0) { return false; }
+  _sppc_bt_object const *const obj = _sppc_bt_object_for(&info);
+  if (obj == NULL || obj->cfi_traps == NULL) { return false; }
+
+  const uintptr_t at = (uintptr_t)pc - obj->bias;
+  for (size_t i = 0; i < obj->ncfi_traps; ++i) {
+    int32_t offset;
+    memcpy(&offset, obj->cfi_traps + i * sizeof offset, sizeof offset);
+    if (obj->cfi_traps_vaddr + i * sizeof offset + (uintptr_t)(intptr_t)offset == at) { return true; }
+  }
+  return false;
 }
 
 /// Name the function containing @p lookup_pc, and give its start as a run-time
@@ -181,7 +200,33 @@ inline char const* _sppc_bt_resolve(void const *lookup_pc, uintptr_t *out_start,
   return info.dli_sname;
 }
 
-// ==================== HANDLER ====================
+// ==================== STACK ====================
+
+_gnu_cold
+inline bool _sppc_bt_secure(void) {
+  return getauxval(AT_SECURE) != 0;
+}
+
+/// The first "backtrace" loads libgcc_s, which allocates. Done here, the
+/// handler never has to. The executable's base is noted too, so its symbols
+/// are read from "/proc/self/exe" rather than from whatever argv[0] was.
+_gnu_cold
+inline void _sppc_bt_prepare(void) {
+  void *warm[1];
+  backtrace(warm, 1);
+
+  Dl_info exe;
+  if (dladdr((void const*)getauxval(AT_PHDR), &exe) != 0) { _sppc_bt_exe_base = exe.dli_fbase; }
+}
+
+/// glibc's unwinder reads each frame's unwind tables, and steps through a
+/// signal frame into the code it interrupted, so the context is not needed.
+_gnu_cold
+inline size_t _sppc_bt_frames(void **frames, const size_t max, void const *uctx) {
+  (void)uctx;
+  const int n = backtrace(frames, (int)max);
+  return n > 0 ? (size_t)n : (size_t)0;
+}
 
 _gnu_cold
 inline void const* _sppc_bt_context_pc(void const *uctx) {
@@ -194,186 +239,4 @@ inline void const* _sppc_bt_context_pc(void const *uctx) {
   (void)uc;
   return NULL;
 #endif
-}
-
-_gnu_cold
-inline void _sppc_bt_print(void const *first_pc, const bool first_is_fault) {
-  void *frames[_SPPC_BT_MAX_FRAMES];
-  const size_t n = (size_t)backtrace(frames, _SPPC_BT_MAX_FRAMES);
-
-  // Start at "first_pc", dropping the reporter's own frames above it: for a
-  // signal, the frame it interrupted, whose address is where the fault
-  // happened; for a failure reported by call ("_sppc_bt_fail_end"), the
-  // return address into the code that failed. Every return address can sit
-  // just past the end of its function when the call was the last thing in it
-  // (a call to something that does not return always is), so those are
-  // looked up one byte back.
-  size_t start = (size_t)0;
-  for (size_t i = 0; i < n; ++i) {
-    if (frames[i] == first_pc) {
-      start = i;
-      break;
-    }
-  }
-
-  _sppc_bt_put("stack backtrace:\n");
-  for (size_t i = start; i < n; ++i) {
-    const uintptr_t pc = (uintptr_t)frames[i];
-    const uintptr_t lookup = i == start && first_is_fault && first_pc != NULL ? pc : pc - 1;
-    uintptr_t sym_start = (uintptr_t)0;
-    char const *object = (char const*)NULL;
-    char const *const name = _sppc_bt_resolve((void const*)lookup, &sym_start, &object);
-
-    _sppc_bt_put("  #");
-    _sppc_bt_put_dec(i - start);
-    _sppc_bt_put(i - start < 10 ? "  " : " ");
-    if (name != NULL) {
-      _sppc_bt_put_symbol(name);
-      _sppc_bt_put("+");
-      _sppc_bt_put_hex(pc - sym_start);
-    }
-    else {
-      _sppc_bt_put("?? ");
-      _sppc_bt_put_hex(pc);
-    }
-    if (object != NULL && object[0] != '\0') {
-      char *const slash = strrchr(object, '/');
-      _sppc_bt_put("  (");
-      _sppc_bt_put(slash != NULL ? slash + 1 : object);
-      _sppc_bt_put(")");
-    }
-    _sppc_bt_put("\n");
-  }
-}
-
-_gnu_cold
-inline void _sppc_bt_handler(const int sig, siginfo_t *info, void *uctx) {
-  // Only the first fatal signal reports. Any other thread arriving here while
-  // it does waits rather than dying: dying ends the process, cutting the
-  // report off before it is written. The reporter ends the process for both.
-  if (_sppc_atomic_flag_test_and_set(&_sppc_bt_busy)) {
-    for (;;) { pause(); }
-  }
-
-  _sppc_bt_put("\n[sppc] fatal signal: ");
-  _sppc_bt_put(_sppc_bt_signal_name(sig));
-  if (sig == SIGSEGV || sig == SIGBUS) {
-    _sppc_bt_put(" at address ");
-    _sppc_bt_put_hex((uintptr_t)info->si_addr);
-  }
-  _sppc_bt_put("\n");
-  if (_sppc_bt_enabled) { _sppc_bt_print(_sppc_bt_context_pc(uctx), true); }
-  else { _sppc_bt_put(_sppc_bt_off_note); }
-  _sppc_bt_flush();
-
-  // Blocked until the handler returns, then delivered with the default
-  // action. Returning alone would do for a fault, which re-executes and
-  // faults again, but not for a signal sent from outside.
-  signal(sig, SIG_DFL);
-  raise(sig);
-}
-
-// ==================== FAILURE ====================
-
-/// The status a failure reported by call ends the process with: the one a
-/// shell gives a process killed by "SIGABRT", so a script testing for an
-/// abort by status still sees one.
-#define _SPPC_FAIL_STATUS 134
-
-/// Begin reporting a failure that no signal raised: a failed runtime check,
-/// or "sppc_abort". The message goes into the report buffer between this and
-/// "_sppc_bt_fail_end". As for a signal, only the first failure reports, and
-/// any other thread arriving waits for it to end the process.
-_gnu_cold
-inline void _sppc_bt_fail_begin(void) {
-  if (_sppc_atomic_flag_test_and_set(&_sppc_bt_busy)) {
-    for (;;) { pause(); }
-  }
-}
-
-/// Add a backtrace from "caller_pc", the return address into the code that
-/// failed, write the report, and end the process with "_exit": no handler,
-/// "atexit" function or stream flush runs, so none can be reached as a gadget
-/// from a failure, and nothing is allocated or unwound.
-_gnu_cold _gnu_noreturn
-inline void _sppc_bt_fail_end(void const *caller_pc) {
-  if (_sppc_bt_enabled) { _sppc_bt_print(caller_pc, false); }
-  else { _sppc_bt_put(_sppc_bt_off_note); }
-  _sppc_bt_flush();
-  _exit(_SPPC_FAIL_STATUS);
-}
-
-// ==================== SETUP ====================
-
-/// Give the calling thread a stack to run the handler on, so a stack overflow
-/// can still be reported: the handler cannot run on the stack that just ran
-/// out. Every thread needs its own.
-_gnu_cold
-inline void _sppc_bt_altstack_up(void) {
-  if (_sppc_bt_altstack != NULL) { return; }
-  size_t size = (size_t)_SPPC_BT_ALTSTACK_MIN;
-  const long sys_min = sysconf(_SC_SIGSTKSZ);
-  if (sys_min > 0 && (size_t)sys_min > size) { size = (size_t)sys_min; }
-
-  void *const p = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0);
-  if (p == MAP_FAILED) { return; }
-  const stack_t ss = {.ss_sp = p, .ss_flags = 0, .ss_size = size};
-  if (sigaltstack(&ss, NULL) != 0) {
-    munmap(p, size);
-    return;
-  }
-  _sppc_bt_altstack = p;
-  _sppc_bt_altstack_size = size;
-}
-
-_gnu_cold
-inline void _sppc_bt_altstack_down(void) {
-  if (_sppc_bt_altstack == NULL) { return; }
-  const stack_t ss = {.ss_sp = NULL, .ss_flags = SS_DISABLE, .ss_size = 0};
-  sigaltstack(&ss, NULL);
-  munmap(_sppc_bt_altstack, _sppc_bt_altstack_size);
-  _sppc_bt_altstack = NULL;
-  _sppc_bt_altstack_size = 0;
-}
-
-_gnu_cold
-inline void _sppc_bt_install(void) {
-  static const int signals[] = {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP, SIGABRT};
-  const size_t nsignals = sizeof signals / sizeof *signals;
-
-  // A setuid/setgid process (AT_SECURE) trusts nothing in its environment,
-  // and does not print its addresses to whoever started it: no backtrace
-  // there, whatever SPP_BACKTRACE says.
-  char *const env = secure_getenv("SPP_BACKTRACE");
-  const bool secure = getauxval(AT_SECURE) != 0;
-  _sppc_bt_enabled = !secure && (env == NULL || strcmp(env, "0") != 0);
-  if (secure) { _sppc_bt_off_note = "note: backtraces are off in a setuid/setgid process\n"; }
-
-  // The first "backtrace" loads libgcc_s, which allocates. Done here, the
-  // handler never has to.
-  void *warm[1];
-  backtrace(warm, 1);
-
-  Dl_info exe;
-  if (dladdr((void const*)getauxval(AT_PHDR), &exe) != 0) { _sppc_bt_exe_base = exe.dli_fbase; }
-  _sppc_bt_altstack_up();
-
-  struct sigaction sa = {0};
-  sa.sa_sigaction = _sppc_bt_handler;
-  // Not "SA_RESETHAND": a second thread faulting would then take the default
-  // action and end the process mid-report. The fatal signals are blocked while
-  // the handler runs instead, so one raised inside it still ends the process.
-  sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
-  sigemptyset(&sa.sa_mask);
-  for (size_t i = 0; i < nsignals; ++i) {
-    sigaddset(&sa.sa_mask, signals[i]);
-  }
-
-  // Only over the default action: a sanitizer or a debugging harness that
-  // has put its own handler in place keeps it.
-  for (size_t i = 0; i < nsignals; ++i) {
-    struct sigaction old;
-    if (sigaction(signals[i], NULL, &old) != 0) { continue; }
-    if (!(old.sa_flags & SA_SIGINFO) && old.sa_handler == SIG_DFL) { sigaction(signals[i], &sa, NULL); }
-  }
 }
