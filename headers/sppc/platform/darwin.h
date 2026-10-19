@@ -135,6 +135,100 @@ int _sppc_errno_darwin(const int err) {
   return out != 0 ? out : SPPC_EIO;
 }
 
+// ==================== MEMORY ====================
+
+// Ahead of platform/posix.h, whose "sppc_madvise" calls it.
+//
+// Linux's MADV_DONTNEED drops a private mapping's pages, so anonymous memory
+// reads back as zero and what was in it is gone. Darwin's is a hint that
+// leaves it all in place. So private anonymous memory has fresh pages mapped
+// over it, with its protection, maximum protection, inheritance and tag, and
+// the old pages go back to the kernel. Shared memory keeps its contents on
+// Linux too, so it gets the hint alone, as does file-backed memory - which,
+// unlike Linux, keeps any private writes to it rather than reading the file
+// again. As on Linux, locked pages refuse it. So does executable anonymous
+// memory, which only "MAP_JIT" could map again, and that is not known here.
+// Either refusal comes before anything is replaced.
+
+#include <mach/mach.h>
+#include <mach/vm_statistics.h>
+#include <stdbool.h>
+#include <sys/mman.h>
+
+/// One region of the address space, and whether DONTNEED replaces it.
+typedef struct {
+  vm_address_t start, end;
+  vm_region_basic_info_data_64_t basic;
+  vm_region_extended_info_data_t extended;
+  bool replace;
+} _sppc_dontneed_region;
+
+/// The region "at" is in, into "out". ENOMEM for an address nothing maps,
+/// as Linux's madvise says for a hole.
+_gnu_inline _gnu_nonnull(2)
+int _sppc_dontneed_region_at(const vm_address_t at, _sppc_dontneed_region *_sppc_restrict out) {
+  vm_address_t start = at, again;
+  vm_size_t size = 0;
+  mach_port_t object = MACH_PORT_NULL;
+  mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+  if (vm_region_64(mach_task_self(), &start, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&out->basic, &count,
+    &object) != KERN_SUCCESS || start > at) { return SPPC_ENOMEM; }
+  again = start;
+  count = VM_REGION_EXTENDED_INFO_COUNT;
+  if (vm_region_64(mach_task_self(), &again, &size, VM_REGION_EXTENDED_INFO, (vm_region_info_t)&out->extended, &count,
+    &object) != KERN_SUCCESS || again != start) { return SPPC_ENOMEM; }
+
+  // Private: not shared on fork (MAP_SHARED is), and not shared now with
+  // anything outside this map. Anonymous: no file anywhere behind it, its
+  // copy-on-write chain included.
+  const unsigned char mode = out->extended.share_mode;
+  out->start = start;
+  out->end = start + size;
+  out->replace = out->basic.inheritance != VM_INHERIT_SHARE && !out->extended.external_pager
+    && (mode == SM_PRIVATE || mode == SM_COW || mode == SM_PRIVATE_ALIASED || mode == SM_EMPTY);
+  return 0;
+}
+
+_gnu_inline_va _gnu_nonnull(1)
+int _sppc_madvise_dontneed(void *addr, const size_t length) {
+  const vm_address_t page = (vm_address_t)vm_page_size - 1;
+  const vm_address_t start = (vm_address_t)addr;
+  if ((start & page) != 0) { return SPPC_EINVAL; }
+  if (length == 0) { return 0; }
+  const vm_address_t end = (start + length + page) & ~page;
+  if (end <= start) { return SPPC_EINVAL; }
+  if (madvise(addr, end - start, MADV_DONTNEED) != 0) { return _sppc_errno_darwin(errno); }
+
+  _sppc_dontneed_region r;
+  for (vm_address_t at = start; at < end; at = r.end) {
+    const int err = _sppc_dontneed_region_at(at, &r);
+    if (err != 0) { return err; }
+    if (r.basic.user_wired_count != 0) { return SPPC_EINVAL; }
+    if (r.replace && (r.basic.protection & VM_PROT_EXECUTE) != 0) { return SPPC_EINVAL; }
+  }
+
+  for (vm_address_t at = start; at < end; at = r.end) {
+    const int err = _sppc_dontneed_region_at(at, &r);
+    if (err != 0) { return err; }
+    if (!r.replace) { continue; }
+    const vm_address_t to = r.end < end ? r.end : end;
+    const vm_size_t len = to - at;
+
+    // MAP_FIXED swaps the old pages out in one step, keeping them if the
+    // new mapping fails. For an anonymous map Darwin reads the fd as its tag.
+    const int tag = r.extended.user_tag != 0 ? VM_MAKE_TAG(r.extended.user_tag) : -1;
+    if (mmap((void*)at, len, r.basic.protection, MAP_FIXED | MAP_PRIVATE | MAP_ANON, tag, 0) == MAP_FAILED) {
+      return _sppc_errno_darwin(errno);
+    }
+    // A new map can be given anything: a lower ceiling must not be lifted.
+    if (r.basic.max_protection != VM_PROT_ALL
+      && vm_protect(mach_task_self(), at, len, TRUE, r.basic.max_protection) != KERN_SUCCESS) { return SPPC_EIO; }
+    if (r.basic.inheritance != VM_INHERIT_DEFAULT
+      && vm_inherit(mach_task_self(), at, len, r.basic.inheritance) != KERN_SUCCESS) { return SPPC_EIO; }
+  }
+  return 0;
+}
+
 #include <sppc/platform/posix.h>
 #include <stdlib.h>
 #include <sys/socket.h>

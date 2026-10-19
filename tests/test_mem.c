@@ -78,17 +78,27 @@ static void check_anonymous_map(void) {
   CHECK(sppc_madvise(p, &len, SPPC_MADV_DONTNEED) == 0);
   CHECK(p[0] == 0 && p[len - 1] == 0);
 
-  // One page locked and unlocked: within the smallest default limit.
+  // One page locked and unlocked: within the smallest default limit. Locked
+  // pages cannot be dropped.
   CHECK(sppc_mlock(p, page_size()) == 0);
+  p[0] = 'a';
+  CHECK(sppc_madvise(p, &len, SPPC_MADV_DONTNEED) == SPPC_EINVAL && p[0] == 'a');
   CHECK(sppc_munlock(p, page_size()) == 0);
+  CHECK(sppc_madvise(p, &len, SPPC_MADV_DONTNEED) == 0 && p[0] == 0);
 
   // Protection really protects: a write to a read-only page faults.
   const size_t one = page_size();
   CHECK(sppc_memprotect(p, one, SPPC_PROT_READ) == 0);
   read_only_page = p;
   char err[4096];
+#if SPPC_KERNEL_DARWIN
+  // Darwin reports a write to a protected page as a bus error.
+  CHECK(check_dies(write_to_read_only, err, sizeof err) == 128 + SIGBUS);
+  CHECK(strstr(err, "fatal signal: SIGBUS") != NULL);
+#else
   CHECK(check_dies(write_to_read_only, err, sizeof err) == 128 + SIGSEGV);
   CHECK(strstr(err, "fatal signal: SIGSEGV") != NULL);
+#endif
   CHECK(sppc_memprotect(p, one, SPPC_PROT_READ | SPPC_PROT_WRITE) == 0);
   p[0] = 'b';
   CHECK(p[0] == 'b');
@@ -97,6 +107,16 @@ static void check_anonymous_map(void) {
 
   CHECK(sppc_munmap(p, &len) == 0);
   CHECK(sppc_munmap(p + 1, &len) == SPPC_EINVAL);
+
+  // Shared memory is not private to this mapping, so dropping its pages here
+  // keeps what is in them.
+  char *s = sppc_mmap(-1, len, SPPC_PROT_READ | SPPC_PROT_WRITE, SPPC_MAP_SHARED | SPPC_MAP_ANONYMOUS, 0);
+  CHECK(s != NULL);
+  if (s == NULL) { return; }
+  s[0] = 'a';
+  s[len - 1] = 'z';
+  CHECK(sppc_madvise(s, &len, SPPC_MADV_DONTNEED) == 0 && s[0] == 'a' && s[len - 1] == 'z');
+  CHECK(sppc_munmap(s, &len) == 0);
 
   // Values sppc has no name for are refused before reaching the platform.
   CHECK(sppc_mmap(-1, one, 0x100, SPPC_MAP_PRIVATE | SPPC_MAP_ANONYMOUS, 0) == NULL);

@@ -554,7 +554,7 @@ _gnu_inline _gnu_nonnull(1)
 int _gt_rwlock_rdlock_until(pthread_rwlock_t *rwlock, const clockid_t clock, struct timespec const *deadline) {
   int err;
   _gt_lock_until(err, rwlock,
-    pthread_rwlock_tryrdlock(rwlock), pthread_rwlock_rdlock(rwlock),
+    _sppc_pthread_rwlock_tryrdlock(rwlock), pthread_rwlock_rdlock(rwlock),
     _sppc_pthread_rwlock_clockrdlock(rwlock, clock, deadline), clock, deadline);
   return err;
 }
@@ -563,7 +563,7 @@ _gnu_inline _gnu_nonnull(1)
 int _gt_rwlock_wrlock_until(pthread_rwlock_t *rwlock, const clockid_t clock, struct timespec const *deadline) {
   int err;
   _gt_lock_until(err, rwlock,
-    pthread_rwlock_trywrlock(rwlock), pthread_rwlock_wrlock(rwlock),
+    _sppc_pthread_rwlock_trywrlock(rwlock), pthread_rwlock_wrlock(rwlock),
     _sppc_pthread_rwlock_clockwrlock(rwlock, clock, deadline), clock, deadline);
   return err;
 }

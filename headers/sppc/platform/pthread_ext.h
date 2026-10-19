@@ -1,8 +1,9 @@
 #pragma once
 
 /// The pthread calls sppc needs beyond POSIX: waits against a chosen clock,
-/// and spin locks. glibc has them all; Darwin has none, so they are built
-/// here from what it does have. Each takes the glibc call's arguments and
+/// spin locks, a once that fits in a handle, and try-locks that say EBUSY
+/// for a lock this thread already holds. glibc has them all; Darwin has
+/// none, so they are built here from what it does have. Each takes the glibc call's arguments and
 /// returns as it does (0 or an error number), under an "_sppc_" name, so
 /// nothing claims a pthread name a later SDK might declare itself.
 
@@ -17,6 +18,11 @@
 #if SPPC_KERNEL_LINUX
 
 typedef pthread_spinlock_t _sppc_spinlock_t;
+typedef pthread_once_t _sppc_once_t;
+#define _SPPC_ONCE_INIT PTHREAD_ONCE_INIT
+#define _sppc_pthread_once pthread_once
+#define _sppc_pthread_rwlock_tryrdlock pthread_rwlock_tryrdlock
+#define _sppc_pthread_rwlock_trywrlock pthread_rwlock_trywrlock
 #define _sppc_pthread_mutex_clocklock pthread_mutex_clocklock
 #define _sppc_pthread_rwlock_clockrdlock pthread_rwlock_clockrdlock
 #define _sppc_pthread_rwlock_clockwrlock pthread_rwlock_clockwrlock
@@ -64,6 +70,25 @@ int _sppc_backoff(const clockid_t clock, struct timespec const *deadline, long *
   return 0;
 }
 
+// ---------- try-locks ----------
+
+// Darwin's rwlock refuses a thread that already holds it for writing with
+// EDEADLK, even to a try. Green tasks share their thread, so one task can
+// meet a lock another task on the same thread holds; as on glibc, that is
+// simply a lock that is taken, and the task waits for it like any other.
+
+_gnu_inline _gnu_nonnull(1)
+int _sppc_pthread_rwlock_tryrdlock(pthread_rwlock_t *rwlock) {
+  const int err = pthread_rwlock_tryrdlock(rwlock);
+  return err == EDEADLK ? EBUSY : err;
+}
+
+_gnu_inline _gnu_nonnull(1)
+int _sppc_pthread_rwlock_trywrlock(pthread_rwlock_t *rwlock) {
+  const int err = pthread_rwlock_trywrlock(rwlock);
+  return err == EDEADLK ? EBUSY : err;
+}
+
 // ---------- timed locks ----------
 
 // Darwin has no timed lock of any kind, clock-based or not, so each one
@@ -89,12 +114,12 @@ int _sppc_pthread_mutex_clocklock(pthread_mutex_t *mutex, const clockid_t clock,
 
 _gnu_inline_va _gnu_nonnull(1, 3)
 int _sppc_pthread_rwlock_clockrdlock(pthread_rwlock_t *rwlock, const clockid_t clock, struct timespec const *deadline) {
-  _SPPC_TIMED_LOCK(pthread_rwlock_tryrdlock(rwlock));
+  _SPPC_TIMED_LOCK(_sppc_pthread_rwlock_tryrdlock(rwlock));
 }
 
 _gnu_inline_va _gnu_nonnull(1, 3)
 int _sppc_pthread_rwlock_clockwrlock(pthread_rwlock_t *rwlock, const clockid_t clock, struct timespec const *deadline) {
-  _SPPC_TIMED_LOCK(pthread_rwlock_trywrlock(rwlock));
+  _SPPC_TIMED_LOCK(_sppc_pthread_rwlock_trywrlock(rwlock));
 }
 
 #undef _SPPC_TIMED_LOCK
@@ -155,6 +180,34 @@ int _sppc_pthread_spin_unlock(_sppc_spinlock_t *spinlock) {
 _gnu_inline _gnu_nonnull(1)
 int _sppc_pthread_spin_destroy(_sppc_spinlock_t *spinlock) {
   (void)spinlock;
+  return 0;
+}
+
+// ---------- once ----------
+
+/// Darwin's "pthread_once_t" is 16 bytes, too big for the handle it has to
+/// live in, so once is built on an int: not run, running, or done. The
+/// thread that moves it from not run to running calls the function; any
+/// other waits it out with the timed locks' pauses, as a once is run once
+/// and seldom raced for.
+typedef int _sppc_once_t;
+#define _SPPC_ONCE_INIT 0
+#define _SPPC_ONCE_RUNNING 1
+#define _SPPC_ONCE_DONE 2
+
+_gnu_inline_va _gnu_nonnull(1, 2)
+int _sppc_pthread_once(_sppc_once_t *once, void (*fn)(void)) {
+  int state = _SPPC_ONCE_INIT;
+  if (__atomic_compare_exchange_n(once, &state, _SPPC_ONCE_RUNNING, false, __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE)) {
+    fn();
+    __atomic_store_n(once, _SPPC_ONCE_DONE, __ATOMIC_RELEASE);
+    return 0;
+  }
+  for (long pause = _SPPC_BACKOFF_MIN_NS; __atomic_load_n(once, __ATOMIC_ACQUIRE) != _SPPC_ONCE_DONE;) {
+    const struct timespec nap = {0, pause};
+    nanosleep(&nap, NULL);
+    if (pause < _SPPC_BACKOFF_MAX_NS) { pause *= 2; }
+  }
   return 0;
 }
 

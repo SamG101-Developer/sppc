@@ -144,8 +144,13 @@ static void check_tcp(const int family) {
   // Once the peer has gone, writing fails rather than raising SIGPIPE.
   CHECK(sppc_close(client) == 0);
   int rc = 0;
-  for (int i = 0; i < 10 && rc == 0; ++i) { rc = sppc_send(server, "x", 1, 0, &n); }
+  // The peer's reset arrives after the first write, and not always at once.
+  for (int i = 0; i < 100 && rc == 0; ++i) {
+    rc = sppc_send(server, "x", 1, 0, &n);
+    if (rc == 0) { usleep(1000); }
+  }
   CHECK(rc == SPPC_EPIPE || rc == SPPC_ECONNRESET);
+  if (rc != SPPC_EPIPE && rc != SPPC_ECONNRESET) { printf("  send after close: %d\n", rc); }
 
   sppc_close(server);
 

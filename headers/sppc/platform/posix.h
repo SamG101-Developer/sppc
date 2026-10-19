@@ -850,10 +850,11 @@ _sppc_api int sppc_pthread_mutex_destroy(uint64_t const *_sppc_restrict mutex) {
 }
 
 _gnu_inline _gnu_restrict_access(write_only, 1) _gnu_nonnull(1)
-// A "pthread_once_t" is an int, so unlike the mutex and friends it genuinely fits in the handle and lives there.
+// A once is an int, so unlike the mutex and friends it genuinely fits in the handle and lives there.
 _sppc_api int sppc_pthread_once_init(uint64_t *_sppc_restrict out) {
+  _Static_assert(sizeof(_sppc_once_t) <= sizeof(uint64_t), "a once must fit in its handle");
   *out = 0; // clear the whole handle, not just the once-control inside it.
-  *(pthread_once_t*)out = (pthread_once_t)PTHREAD_ONCE_INIT;
+  *(_sppc_once_t*)out = (_sppc_once_t)_SPPC_ONCE_INIT;
   return 0;
 }
 
@@ -868,7 +869,7 @@ void _sppc_once_entry(void) {
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_nonnull(1)
 _sppc_api int sppc_pthread_once(uint64_t const *_sppc_restrict once, const sppc_closure func) {
   _sppc_once_closure = func;
-  _extract_err(int) pthread_once((pthread_once_t*)once, _sppc_once_entry);
+  _extract_err(int) _sppc_pthread_once((_sppc_once_t*)once, _sppc_once_entry);
   free(func.env);
   _return_normalized_pthread_err
 }
@@ -924,7 +925,7 @@ _sppc_api int sppc_pthread_rwlock_rdlock(uint64_t const *_sppc_restrict rwlock) 
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_rwlock_tryrdlock(uint64_t const *_sppc_restrict rwlock) {
-  _extract_err(int) pthread_rwlock_tryrdlock(_pthread_handle(pthread_rwlock_t, rwlock));
+  _extract_err(int) _sppc_pthread_rwlock_tryrdlock(_pthread_handle(pthread_rwlock_t, rwlock));
   _return_normalized_pthread_err
 }
 
@@ -936,7 +937,7 @@ _sppc_api int sppc_pthread_rwlock_wrlock(uint64_t const *_sppc_restrict rwlock) 
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_rwlock_trywrlock(uint64_t const *_sppc_restrict rwlock) {
-  _extract_err(int) pthread_rwlock_trywrlock(_pthread_handle(pthread_rwlock_t, rwlock));
+  _extract_err(int) _sppc_pthread_rwlock_trywrlock(_pthread_handle(pthread_rwlock_t, rwlock));
   _return_normalized_pthread_err
 }
 
@@ -1356,6 +1357,9 @@ _gnu_inline _gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)
 _sppc_api int sppc_madvise(void *_sppc_restrict addr, size_t const *_sppc_restrict length, const int advice) {
   int os_advice;
   if (_sppc_to_os_madvise(advice, &os_advice) != 0) { return SPPC_EINVAL; }
+#if SPPC_KERNEL_DARWIN
+  if (advice == SPPC_MADV_DONTNEED) { return _sppc_madvise_dontneed(addr, *length); } // Linux's, not a hint
+#endif
   _extract_err(int) madvise(addr, *length, os_advice);
   _return_normalized_err
 }
@@ -1681,6 +1685,12 @@ _posix_syscall(88)
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_nonnull(1)
 _sppc_api int sppc_unlink(char const *_sppc_restrict path) {
   _extract_err(int) unlink(path);
+#if SPPC_KERNEL_DARWIN
+  // Darwin refuses a directory with EPERM, which Linux (and so sppc) keeps
+  // for a file it may not remove.
+  struct stat st;
+  if (err != 0 && errno == EPERM && lstat(path, &st) == 0 && S_ISDIR(st.st_mode)) { return SPPC_EISDIR; }
+#endif
   _return_normalized_err
 }
 
@@ -1771,8 +1781,17 @@ _sppc_api int sppc_realpath(char const *_sppc_restrict path, char *_sppc_restric
   _return_normalized_ptr_err
 }
 
+/// Whether a template ends in the six X's the name is made from. glibc
+/// insists on them; Darwin takes fewer, even none, and makes the path as is.
+_gnu_inline _gnu_nonnull(1)
+bool _sppc_is_temp_template(char const *path) {
+  const size_t len = strlen(path);
+  return len >= 6 && memcmp(path + len - 6, "XXXXXX", 6) == 0;
+}
+
 _gnu_inline _gnu_restrict_access(read_write, 1) _gnu_restrict_access(write_only, 2) _gnu_nonnull(1, 2)
 _sppc_api int sppc_mktemp(char *_sppc_restrict path, int *_sppc_restrict out_fd) {
+  if (!_sppc_is_temp_template(path)) { *out_fd = -1; return SPPC_EINVAL; }
   _extract_err(int) mkostemp(path, O_CLOEXEC);
   *out_fd = err < 0 ? -1 : err;
   _return_normalized_err
@@ -1780,6 +1799,7 @@ _sppc_api int sppc_mktemp(char *_sppc_restrict path, int *_sppc_restrict out_fd)
 
 _gnu_inline _gnu_restrict_access(read_write, 1) _gnu_nonnull(1)
 _sppc_api int sppc_mktemp_dir(char *_sppc_restrict path) {
+  if (!_sppc_is_temp_template(path)) { return SPPC_EINVAL; }
   _extract_err(char*) mkdtemp(path);
   _return_normalized_ptr_err
 }
