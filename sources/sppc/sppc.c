@@ -15,9 +15,11 @@ bool _unsafe_stack_wanted = false;
 _sppc_tls_initial_exec _sppc_thread_local gt_runtime *_gt_rt = NULL;
 
 // Crash reporting state (backtrace.h).
+#if SPPC_KERNEL_LINUX
 _sppc_bt_object _sppc_bt_objects[_SPPC_BT_MAX_OBJECTS];
 size_t _sppc_bt_nobjects = 0;
 void const *_sppc_bt_exe_base = NULL;
+#endif
 bool _sppc_bt_enabled = true;
 char const *_sppc_bt_off_note = "note: backtraces are off because SPP_BACKTRACE=0\n";
 _sppc_atomic_flag _sppc_bt_busy = _SPPC_ATOMIC_FLAG_INIT;
@@ -66,13 +68,24 @@ extern void _sppc_bt_flush(void);
 extern void _sppc_bt_put_hex(uintptr_t v);
 extern void _sppc_bt_put_dec(size_t v);
 extern char const* _sppc_bt_signal_name(int sig);
+#if SPPC_KERNEL_LINUX
 extern void _sppc_bt_load(_sppc_bt_object *obj, char const *path);
 extern _sppc_bt_object* _sppc_bt_object_for(Dl_info const *info);
+#elif SPPC_KERNEL_DARWIN
+extern bool _sppc_bt_image_for(struct mach_header_64 const *mh, uintptr_t pc, _sppc_bt_image *out);
+extern uintptr_t _sppc_bt_strip(uintptr_t addr);
+extern bool _sppc_bt_read_frame(uintptr_t fp, uintptr_t out[2]);
+#endif
+extern bool _sppc_bt_is_cfi_trap(void const *pc);
 extern char const* _sppc_bt_resolve(void const *lookup_pc, uintptr_t *out_start, char const **out_object);
+extern bool _sppc_bt_secure(void);
+extern void _sppc_bt_prepare(void);
+extern size_t _sppc_bt_frames(void **frames, size_t max, void const *uctx);
 extern void const* _sppc_bt_context_pc(void const *uctx);
-extern void _sppc_bt_print(void const *first_pc, bool first_is_fault);
+extern void _sppc_bt_print(void const *uctx, void const *first_pc);
 extern void _sppc_bt_handler(int sig, siginfo_t *info, void *uctx);
 extern void _sppc_bt_fail_begin(void);
+extern void _sppc_bt_cfi_failed(void const *uctx, void const *pc);
 extern void _sppc_bt_fail_end(void const *caller_pc);
 extern void _sppc_bt_altstack_up(void);
 extern void _sppc_bt_altstack_down(void);
@@ -84,6 +97,14 @@ extern void _gt_yield(void);
 extern int _gt_await(gt_handle_t handle);
 extern int _gt_detach(gt_handle_t handle);
 extern void _gt_drain(void);
+
+extern int _sppc_fd_set_flags(int fd, bool cloexec, bool nonblock);
+#if SPPC_KERNEL_DARWIN
+extern int _sppc_backoff(clockid_t clock, struct timespec const *deadline, long *pause_ns);
+extern int _sppc_pthread_mutex_clocklock(pthread_mutex_t *mutex, clockid_t clock, struct timespec const *deadline);
+extern int _sppc_pthread_rwlock_clockrdlock(pthread_rwlock_t *rwlock, clockid_t clock, struct timespec const *deadline);
+extern int _sppc_pthread_rwlock_clockwrlock(pthread_rwlock_t *rwlock, clockid_t clock, struct timespec const *deadline);
+#endif
 
 extern void* _sppc_thread_entry(void *closure);
 extern void _sppc_once_entry(void);
@@ -97,8 +118,10 @@ extern int sppc_unsafe_stack_up(void);
 extern void sppc_unsafe_stack_down(void);
 extern int sppc_init(void);
 extern int sppc_deny_wx(void);
+#if SPPC_KERNEL_LINUX
 extern int _sppc_seal_range(uintptr_t start, uintptr_t end, uintptr_t page);
 extern int _sppc_seal_object(struct dl_phdr_info *info, size_t size, void *data);
+#endif
 extern int sppc_seal_segments(void);
 extern int sppc_cleanup(void);
 extern int sppc_pthread_create(sppc_closure start_routine, uint64_t *_sppc_restrict out);

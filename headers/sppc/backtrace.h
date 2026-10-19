@@ -9,8 +9,10 @@
 
 #if SPPC_KERNEL_LINUX
   #include <sppc/backtrace/elf.h>
+  #include <sppc/backtrace/posix.h>
 #elif SPPC_KERNEL_DARWIN
   #include <sppc/backtrace/macho.h>
+  #include <sppc/backtrace/posix.h>
 #elif SPPC_PLATFORM_WINDOWS
   #include <sppc/backtrace/pe.h>
 #endif
