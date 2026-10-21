@@ -37,8 +37,8 @@ jobs:
         include:
           - { target: x86_64-linux-gnu,    os: ubuntu-24.04,     compiler: gcc,   required: true,  ready: true,  files: libsppc.so }
           - { target: aarch64-linux-gnu,   os: ubuntu-24.04-arm, compiler: gcc,   required: true,  ready: true,  files: libsppc.so }
-          - { target: x86_64-macos-clang,  os: macos-15-intel,   compiler: clang, required: true,  ready: false, files: libsppc.dylib }
-          - { target: aarch64-macos-clang, os: macos-15,         compiler: clang, required: true,  ready: false, files: libsppc.dylib }
+          - { target: x86_64-macos-clang,  os: macos-15-intel,   compiler: clang, required: true,  ready: true, files: libsppc.dylib }
+          - { target: aarch64-macos-clang, os: macos-15,         compiler: clang, required: true,  ready: true, files: libsppc.dylib }
           - { target: x86_64-windows-msvc, os: windows-latest,   compiler: msvc,  required: false, ready: false, files: sppc.dll sppc.lib }
 
     # Windows otherwise defaults "run" to PowerShell.
@@ -46,15 +46,26 @@ jobs:
       run:
         shell: bash
     steps:
-      # The action is Linux-only, so the Windows and macOS
-      # targets go without it. Todo: Egress stays on audit
-      # until its endpoints are known.
+      # macOS goes without it. Todo: Linux egress stays on
+      # audit until its endpoints are known.
       - name: Harden Runner
         if: runner.os == 'Linux'
         uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25  # v2.22.1
         with:
           egress-policy: audit
           disable-sudo: true
+
+      - name: Harden Runner
+        if: runner.os == 'Windows'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25  # v2.22.1
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            pypi.org:443
+            files.pythonhosted.org:443
+            raw.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
 
       - name: Checkout sppc
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
