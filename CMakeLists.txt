@@ -58,8 +58,7 @@ if (UNIX AND NOT APPLE AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     "LINKER:-z,noexecstack"
     "LINKER:-z,separate-code"
     "LINKER:-z,defs"
-    "LINKER:-z,text"
-    "LINKER:--error-rwx-segments")
+    "LINKER:-z,text")
 endif ()
 
 if (SPPC_BUILD_TESTS)
