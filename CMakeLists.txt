@@ -34,6 +34,15 @@ if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     sppc_objects PRIVATE $<$<COMPILE_LANGUAGE:C>:-fvisibility=hidden>)
 endif ()
 
+# Fortified libc calls ("__memcpy_chk" and friends). The compiler
+# fails a link against an ffi library without them (this is flag
+# adjustable in the s++ compiler).
+if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(
+    sppc_objects PRIVATE
+    "$<$<AND:$<COMPILE_LANGUAGE:C>,$<NOT:$<CONFIG:Debug>>>:-U_FORTIFY_SOURCE;-D_FORTIFY_SOURCE=$<IF:$<PLATFORM_ID:Darwin>,2,3>>")
+endif ()
+
 add_library(
   ${PROJECT_NAME} SHARED $<TARGET_OBJECTS:sppc_objects>)
 target_link_libraries(
@@ -49,8 +58,7 @@ if (UNIX AND NOT APPLE AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     "LINKER:-z,noexecstack"
     "LINKER:-z,separate-code"
     "LINKER:-z,defs"
-    "LINKER:-z,text"
-    "LINKER:--error-rwx-segments")
+    "LINKER:-z,text")
 endif ()
 
 if (SPPC_BUILD_TESTS)
