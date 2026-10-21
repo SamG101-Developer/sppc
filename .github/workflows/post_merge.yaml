@@ -51,7 +51,9 @@ env:
 jobs:
   build:
     name: Build
-    if: github.event.head_commit.author.username != 'dependabot[bot]'
+    # A dependabot merge only moves action pins, so it never
+    # bumps the stl (skipping here skips "bump" too).
+    if: github.event.head_commit.author.name != 'dependabot[bot]'
     permissions:
       contents: read
     uses: ./.github/workflows/_build.yaml
