@@ -3,8 +3,10 @@
 # (to check, then ship).
 #
 # The targets live here, in one place. "target" names the
-# folder spp-stl keeps that target's binaries in
-# (<arch>-<os>-<toolchain>), "files" what goes in it. Every
+# folder spp-stl keeps that target's binaries in, spelled as
+# spp spells it (<arch>-<os>[-<env>]: "aarch64-macos", not
+# "aarch64-macos-clang"), or spp rejects the folder; "files"
+# what goes in it. Every
 # target builds every time, so a port's progress shows, but
 # only a "ready" one counts: an unready target may fail
 # without failing the build, and never uploads, so it is
@@ -37,8 +39,8 @@ jobs:
         include:
           - { target: x86_64-linux-gnu,    os: ubuntu-24.04,     compiler: gcc,   required: true,  ready: true,  files: libsppc.so }
           - { target: aarch64-linux-gnu,   os: ubuntu-24.04-arm, compiler: gcc,   required: true,  ready: true,  files: libsppc.so }
-          - { target: x86_64-macos-clang,  os: macos-15-intel,   compiler: clang, required: true,  ready: true, files: libsppc.dylib }
-          - { target: aarch64-macos-clang, os: macos-15,         compiler: clang, required: true,  ready: true, files: libsppc.dylib }
+          - { target: x86_64-macos,        os: macos-15-intel,   compiler: clang, required: true,  ready: true, files: libsppc.dylib }
+          - { target: aarch64-macos,       os: macos-15,         compiler: clang, required: true,  ready: true, files: libsppc.dylib }
           - { target: x86_64-windows-msvc, os: windows-latest,   compiler: msvc,  required: false, ready: false, files: sppc.dll sppc.lib }
 
     # Windows otherwise defaults "run" to PowerShell.

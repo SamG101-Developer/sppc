@@ -81,6 +81,11 @@ if (SPPC_BUILD_TESTS)
       $<TARGET_PROPERTY:sppc_objects,INTERFACE_COMPILE_DEFINITIONS>
       SPPC_ASYNC_BLOCKING=1)
     list(APPEND SPPC_TEST_BACKENDS blocking)
+
+    # The ring's own fallback, taken when "io_uring_setup" fails
+    # (an old kernel, or a sandbox): the default build run with
+    # the call failed by seccomp.
+    add_executable(no_uring tests/no_uring.c)
   endif ()
 
   file(GLOB SPPC_TESTS CONFIGURE_DEPENDS tests/test_*.c)
@@ -109,7 +114,13 @@ if (SPPC_BUILD_TESTS)
       # Heap damage from the runtime tends to surface far from its
       # cause. 77 is a test reporting it cannot run here (no ring
       # for example), shown as skipped.
-      set_tests_properties(${name} PROPERTIES
+      set(runs ${name})
+      if (backend STREQUAL "default" AND TARGET no_uring)
+        add_test(
+          NAME ${name}_noring COMMAND no_uring $<TARGET_FILE:${name}>)
+        list(APPEND runs ${name}_noring)
+      endif ()
+      set_tests_properties(${runs} PROPERTIES
         ENVIRONMENT "MALLOC_CHECK_=3" TIMEOUT 120 SKIP_RETURN_CODE 77)
     endforeach ()
   endforeach ()

@@ -7,13 +7,14 @@
 # spp-stl's layout: one stub for every platform (sppc owns
 # its types and constants, so the bindings are the same
 # everywhere), and one folder of binaries per target, named
-# <arch>-<os>-<toolchain> (the targets are in _build.yaml):
+# as spp names it, <arch>-<os>[-<env>] (the targets are in
+# _build.yaml):
 #
 #   ffi/sppc/stub.spp
 #   ffi/sppc/x86_64-linux-gnu/libsppc.so
 #   ffi/sppc/aarch64-linux-gnu/libsppc.so
-#   ffi/sppc/x86_64-macos-clang/libsppc.dylib
-#   ffi/sppc/aarch64-macos-clang/libsppc.dylib
+#   ffi/sppc/x86_64-macos/libsppc.dylib
+#   ffi/sppc/aarch64-macos/libsppc.dylib
 #   ffi/sppc/x86_64-windows-msvc/[sppc.dll, sppc.lib]
 #
 # "Up to date" is decided from the sources, not by comparing
@@ -135,6 +136,16 @@ jobs:
         if: steps.check.outputs.stale == 'true'
         id: update
         run: |
+          # Exactly the ready targets' folders: spp rejects a
+          # folder that does not name a target, so one left by a
+          # renamed or dropped target breaks every build.
+          for dir in stl/ffi/sppc/*/; do
+            case " ${{ steps.check.outputs.ready }} " in
+              *" $(basename "$dir") "*) ;;
+              *) rm -rf "$dir" ;;
+            esac
+          done
+
           # Each ready target's folder, made if it is not there,
           # holding exactly what its build uploaded.
           for target in ${{ steps.check.outputs.ready }}; do
