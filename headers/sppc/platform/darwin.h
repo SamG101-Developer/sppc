@@ -2,7 +2,7 @@
 
 /// The parts of the public api that Darwin implements with
 /// calls of its own, rather than the POSIX ones in
-/// platform/posix.h: the errno table, barriers, the calls
+/// platform/posix.h: barriers, the calls
 /// that are Linux syscalls there ("pipe2", "accept4",
 /// "sendfile", "copy_file_range", "getrandom",
 /// "clock_nanosleep"), built from what Darwin has, and
@@ -12,128 +12,10 @@
 #include <sppc/config.h>
 #include <sppc/macros.h>
 #include <sppc/types.h>
+#include <sppc/platform/errno.h>
 #include <errno.h>
 #include <limits.h>
 #include <stdint.h>
-
-// ==================== ERRORS ====================
-
-// Ahead of platform/posix.h, whose "_sppc_errno" calls it.
-//
-// Darwin's numbers are its own past 34 (EAGAIN is 35, not
-// 11), so every one is looked up. Indexed by Darwin's number;
-// anything without an sppc counterpart (the Sun RPC errors,
-// EFTYPE, EAUTH, EPWROFF, ...), and anything past the table,
-// is SPPC_EIO. Linux-only errors are simply never produced.
-_gnu_inline
-int _sppc_errno_darwin(const int err) {
-  static const uint8_t table[ELAST + 1] = {
-    // The same error under the same name.
-    [EPERM]            = SPPC_EPERM,
-    [ENOENT]           = SPPC_ENOENT,
-    [ESRCH]            = SPPC_ESRCH,
-    [EINTR]            = SPPC_EINTR,
-    [EIO]              = SPPC_EIO,
-    [ENXIO]            = SPPC_ENXIO,
-    [E2BIG]            = SPPC_E2BIG,
-    [ENOEXEC]          = SPPC_ENOEXEC,
-    [EBADF]            = SPPC_EBADF,
-    [ECHILD]           = SPPC_ECHILD,
-    [EDEADLK]          = SPPC_EDEADLK,
-    [ENOMEM]           = SPPC_ENOMEM,
-    [EACCES]           = SPPC_EACCES,
-    [EFAULT]           = SPPC_EFAULT,
-    [ENOTBLK]          = SPPC_ENOTBLK,
-    [EBUSY]            = SPPC_EBUSY,
-    [EEXIST]           = SPPC_EEXIST,
-    [EXDEV]            = SPPC_EXDEV,
-    [ENODEV]           = SPPC_ENODEV,
-    [ENOTDIR]          = SPPC_ENOTDIR,
-    [EISDIR]           = SPPC_EISDIR,
-    [EINVAL]           = SPPC_EINVAL,
-    [ENFILE]           = SPPC_ENFILE,
-    [EMFILE]           = SPPC_EMFILE,
-    [ENOTTY]           = SPPC_ENOTTY,
-    [ETXTBSY]          = SPPC_ETXTBSY,
-    [EFBIG]            = SPPC_EFBIG,
-    [ENOSPC]           = SPPC_ENOSPC,
-    [ESPIPE]           = SPPC_ESPIPE,
-    [EROFS]            = SPPC_EROFS,
-    [EMLINK]           = SPPC_EMLINK,
-    [EPIPE]            = SPPC_EPIPE,
-    [EDOM]             = SPPC_EDOM,
-    [ERANGE]           = SPPC_ERANGE,
-    [EAGAIN]           = SPPC_EAGAIN,
-    [EINPROGRESS]      = SPPC_EINPROGRESS,
-    [EALREADY]         = SPPC_EALREADY,
-    [ENOTSOCK]         = SPPC_ENOTSOCK,
-    [EDESTADDRREQ]     = SPPC_EDESTADDRREQ,
-    [EMSGSIZE]         = SPPC_EMSGSIZE,
-    [EPROTOTYPE]       = SPPC_EPROTOTYPE,
-    [ENOPROTOOPT]      = SPPC_ENOPROTOOPT,
-    [EPROTONOSUPPORT]  = SPPC_EPROTONOSUPPORT,
-    [ESOCKTNOSUPPORT]  = SPPC_ESOCKTNOSUPPORT,
-    [EPFNOSUPPORT]     = SPPC_EPFNOSUPPORT,
-    [EAFNOSUPPORT]     = SPPC_EAFNOSUPPORT,
-    [EADDRINUSE]       = SPPC_EADDRINUSE,
-    [EADDRNOTAVAIL]    = SPPC_EADDRNOTAVAIL,
-    [ENETDOWN]         = SPPC_ENETDOWN,
-    [ENETUNREACH]      = SPPC_ENETUNREACH,
-    [ENETRESET]        = SPPC_ENETRESET,
-    [ECONNABORTED]     = SPPC_ECONNABORTED,
-    [ECONNRESET]       = SPPC_ECONNRESET,
-    [ENOBUFS]          = SPPC_ENOBUFS,
-    [EISCONN]          = SPPC_EISCONN,
-    [ENOTCONN]         = SPPC_ENOTCONN,
-    [ESHUTDOWN]        = SPPC_ESHUTDOWN,
-    [ETOOMANYREFS]     = SPPC_ETOOMANYREFS,
-    [ETIMEDOUT]        = SPPC_ETIMEDOUT,
-    [ECONNREFUSED]     = SPPC_ECONNREFUSED,
-    [ELOOP]            = SPPC_ELOOP,
-    [ENAMETOOLONG]     = SPPC_ENAMETOOLONG,
-    [EHOSTDOWN]        = SPPC_EHOSTDOWN,
-    [EHOSTUNREACH]     = SPPC_EHOSTUNREACH,
-    [ENOTEMPTY]        = SPPC_ENOTEMPTY,
-    [EUSERS]           = SPPC_EUSERS,
-    [EDQUOT]           = SPPC_EDQUOT,
-    [ESTALE]           = SPPC_ESTALE,
-    [EREMOTE]          = SPPC_EREMOTE,
-    [ENOLCK]           = SPPC_ENOLCK,
-    [ENOSYS]           = SPPC_ENOSYS,
-    [EOVERFLOW]        = SPPC_EOVERFLOW,
-    [ECANCELED]        = SPPC_ECANCELED,
-    [EIDRM]            = SPPC_EIDRM,
-    [ENOMSG]           = SPPC_ENOMSG,
-    [EILSEQ]           = SPPC_EILSEQ,
-    [EBADMSG]          = SPPC_EBADMSG,
-    [EMULTIHOP]        = SPPC_EMULTIHOP,
-    [ENODATA]          = SPPC_ENODATA,
-    [ENOLINK]          = SPPC_ENOLINK,
-    [ENOSR]            = SPPC_ENOSR,
-    [ENOSTR]           = SPPC_ENOSTR,
-    [EPROTO]           = SPPC_EPROTO,
-    [ETIME]            = SPPC_ETIME,
-    [ENOTRECOVERABLE]  = SPPC_ENOTRECOVERABLE,
-    [EOWNERDEAD]       = SPPC_EOWNERDEAD,
-    // Darwin's own, where a Linux error means the same thing. Linux has
-    // one number for "not supported"; Darwin has two, which are only one
-    // in its legacy (pre-UNIX03) mode.
-    [ENOTSUP]    = SPPC_EOPNOTSUPP,
-#if EOPNOTSUPP != ENOTSUP
-    [EOPNOTSUPP] = SPPC_EOPNOTSUPP,
-#endif
-    [EPROCLIM]   = SPPC_EAGAIN,     // too many processes: Linux's fork says EAGAIN
-    [EBADEXEC]   = SPPC_ENOEXEC,    // a binary that cannot be run, for one reason
-    [EBADARCH]   = SPPC_ENOEXEC,    // or another
-    [ESHLIBVERS] = SPPC_ENOEXEC,
-    [EBADMACHO]  = SPPC_ENOEXEC,
-    [ENOATTR]    = SPPC_ENODATA,    // no such extended attribute, as Linux's xattr calls say
-    [EQFULL]     = SPPC_ENOBUFS,    // an interface's output queue is full
-  };
-  if (err == 0) { return 0; }
-  const int out = err > 0 && err <= ELAST ? table[err] : 0;
-  return out != 0 ? out : SPPC_EIO;
-}
 
 // ==================== MEMORY ====================
 
@@ -197,7 +79,7 @@ int _sppc_madvise_dontneed(void *addr, const size_t length) {
   if (length == 0) { return 0; }
   const vm_address_t end = (start + length + page) & ~page;
   if (end <= start) { return SPPC_EINVAL; }
-  if (madvise(addr, end - start, MADV_DONTNEED) != 0) { return _sppc_errno_darwin(errno); }
+  if (madvise(addr, end - start, MADV_DONTNEED) != 0) { return _sppc_errno(errno); }
 
   _sppc_dontneed_region r;
   for (vm_address_t at = start; at < end; at = r.end) {
@@ -218,7 +100,7 @@ int _sppc_madvise_dontneed(void *addr, const size_t length) {
     // new mapping fails. For an anonymous map Darwin reads the fd as its tag.
     const int tag = r.extended.user_tag != 0 ? VM_MAKE_TAG(r.extended.user_tag) : -1;
     if (mmap((void*)at, len, r.basic.protection, MAP_FIXED | MAP_PRIVATE | MAP_ANON, tag, 0) == MAP_FAILED) {
-      return _sppc_errno_darwin(errno);
+      return _sppc_errno(errno);
     }
     // A new map can be given anything: a lower ceiling must not be lifted.
     if (r.basic.max_protection != VM_PROT_ALL
