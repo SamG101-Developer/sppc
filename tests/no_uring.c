@@ -9,6 +9,7 @@
 #define _GNU_SOURCE
 #endif
 
+#include <sppc/config.h>
 #include <errno.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -19,15 +20,41 @@
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 
-#if defined(__x86_64__)
+#if SPPC_ARCH_X86_64
 #define NO_URING_ARCH AUDIT_ARCH_X86_64
-#elif defined(__aarch64__)
+#elif SPPC_ARCH_ARM64
 #define NO_URING_ARCH AUDIT_ARCH_AARCH64
+#elif SPPC_ARCH_S390X
+#define NO_URING_ARCH AUDIT_ARCH_S390X
+#elif SPPC_ARCH_X86
+#define NO_URING_ARCH AUDIT_ARCH_I386
+#elif SPPC_ARCH_PPC64 && defined(__LITTLE_ENDIAN__)
+#define NO_URING_ARCH AUDIT_ARCH_PPC64LE
+#elif SPPC_ARCH_PPC64
+#define NO_URING_ARCH AUDIT_ARCH_PPC64
+#elif SPPC_ARCH_RISCV64
+#define NO_URING_ARCH AUDIT_ARCH_RISCV64
+#elif SPPC_ARCH_ARM
+#define NO_URING_ARCH AUDIT_ARCH_ARM
+#elif SPPC_ARCH_MIPS && defined(__MIPSEL__)
+#define NO_URING_ARCH AUDIT_ARCH_MIPSEL
+#elif SPPC_ARCH_MIPS
+#define NO_URING_ARCH AUDIT_ARCH_MIPS
+#elif SPPC_ARCH_MIPS64 && defined(__MIPSEL__)
+#define NO_URING_ARCH AUDIT_ARCH_MIPSEL64
+#elif SPPC_ARCH_MIPS64
+#define NO_URING_ARCH AUDIT_ARCH_MIPS64
+#elif SPPC_ARCH_LOONGARCH64
+#define NO_URING_ARCH AUDIT_ARCH_LOONGARCH64
+#elif SPPC_ARCH_M68K
+#define NO_URING_ARCH AUDIT_ARCH_M68K
+#elif SPPC_ARCH_SPARC64
+#define NO_URING_ARCH AUDIT_ARCH_SPARC64
 #else
 #error "no_uring: unknown architecture"
 #endif
 
-int main(int argc, char **argv) {
+int main(const int argc, char **argv) {
   if (argc < 2) {
     fprintf(stderr, "usage: no_uring <program> [args...]\n");
     return 2;
