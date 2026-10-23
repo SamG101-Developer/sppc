@@ -100,8 +100,9 @@ jobs:
       - name: Install cmake
         run: pip install "cmake>=4.1"
 
-      # The target's gcc and libc (into /usr/<triple>, where qemu
-      # finds the loader), and what its tests run with.
+      # The target's gcc and, as its recommendation, libc (into
+      # /usr/<triple>, where qemu finds the loader), and what its
+      # tests run with.
       - name: Install the cross toolchain
         if: matrix.cross
         env:
@@ -112,7 +113,7 @@ jobs:
           read -ra extra <<< "${PACKAGES}"
           if [ -n "$QEMU" ]; then extra+=(qemu-user); fi
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends "gcc-${CROSS}" "${extra[@]}"
+          sudo apt-get install -y "gcc-${CROSS}" "${extra[@]}"
 
       - name: Set up msvc
         if: matrix.compiler == 'msvc'
