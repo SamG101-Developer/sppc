@@ -8,12 +8,19 @@
 #define _GNU_SOURCE
 #endif
 
+#include <sppc/config.h>
 #include <sppc/backtrace/common.h>
 #include <dlfcn.h>
 #include <elf.h>
-#include <execinfo.h>
+#if defined(__GLIBC__)
+  #include <execinfo.h>
+#else
+  #define UNW_LOCAL_ONLY
+  #include <libunwind.h>
+#endif
 #include <fcntl.h>
 #include <link.h>
+#include <signal.h>
 #include <sys/auxv.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -166,6 +173,20 @@ inline bool _sppc_bt_is_cfi_trap(void const *pc) {
   return false;
 }
 
+/// Where a function symbol's code starts, as a link-time address. On ELFv1
+/// (big-endian ppc64) the symbol is a descriptor in ".opd" instead, whose
+/// first word is the code's run-time address; every function has one, so the
+/// read stays in the object's mapped ".opd".
+_gnu_cold
+inline uintptr_t _sppc_bt_sym_code(_sppc_bt_object const *obj, ElfW(Sym) const *s) {
+#if SPPC_ABI_PPC64_ELFV1
+  return (uintptr_t)*(uint64_t const*)(obj->bias + s->st_value) - obj->bias;
+#else
+  (void)obj;
+  return s->st_value;
+#endif
+}
+
 /// Name the function containing @p lookup_pc, and give its start as a run-time
 /// address. Falls back to the nearest exported symbol, and then to nothing.
 _gnu_cold
@@ -178,19 +199,26 @@ inline char const* _sppc_bt_resolve(void const *lookup_pc, uintptr_t *out_start,
   if (obj != NULL && obj->syms != NULL) {
     const uintptr_t addr = (uintptr_t)lookup_pc - obj->bias;
     ElfW(Sym) const *best = (ElfW(Sym) const*)NULL;
+    uintptr_t best_code = 0;
     for (size_t i = 0; i < obj->nsyms; ++i) {
       ElfW(Sym) const *const s = &obj->syms[i];
       const int type = ELF64_ST_TYPE(s->st_info);
       if ((type != STT_FUNC && type != STT_GNU_IFUNC) || s->st_shndx == SHN_UNDEF) { continue; }
-      if (s->st_name >= obj->strtab_size || s->st_value > addr) { continue; }
-      if (addr < s->st_value + s->st_size) {
+      if (s->st_name >= obj->strtab_size) { continue; }
+      const uintptr_t code = _sppc_bt_sym_code(obj, s);
+      if (code > addr) { continue; }
+      if (addr < code + s->st_size) {
         best = s;
+        best_code = code;
         break;
       }
-      if (s->st_size == 0 && (best == NULL || s->st_value > best->st_value)) { best = s; }
+      if (s->st_size == 0 && (best == NULL || code > best_code)) {
+        best = s;
+        best_code = code;
+      }
     }
     if (best != NULL) {
-      *out_start = best->st_value + obj->bias;
+      *out_start = best_code + obj->bias;
       return obj->strtab + best->st_name;
     }
   }
@@ -207,13 +235,16 @@ inline bool _sppc_bt_secure(void) {
   return getauxval(AT_SECURE) != 0;
 }
 
-/// The first "backtrace" loads libgcc_s, which allocates. Done here, the
-/// handler never has to. The executable's base is noted too, so its symbols
-/// are read from "/proc/self/exe" rather than from whatever argv[0] was.
+inline size_t _sppc_bt_frames(void **frames, size_t max, void const *uctx);
+
+/// The first walk loads what it needs (glibc's "backtrace" loads libgcc_s),
+/// which allocates. Done here, the handler never has to. The executable's
+/// base is noted too, so its symbols are read from "/proc/self/exe" rather
+/// than from whatever argv[0] was.
 _gnu_cold
 inline void _sppc_bt_prepare(void) {
   void *warm[1];
-  backtrace(warm, 1);
+  _sppc_bt_frames(warm, 1, NULL);
 
   Dl_info exe;
   if (dladdr((void const*)getauxval(AT_PHDR), &exe) != 0) { _sppc_bt_exe_base = exe.dli_fbase; }
@@ -223,18 +254,67 @@ inline void _sppc_bt_prepare(void) {
 /// signal frame into the code it interrupted, so the context is not needed.
 _gnu_cold
 inline size_t _sppc_bt_frames(void **frames, const size_t max, void const *uctx) {
+#if defined(__GLIBC__)
   (void)uctx;
   const int n = backtrace(frames, (int)max);
   return n > 0 ? (size_t)n : (size_t)0;
+#else
+  // musl has no "backtrace", and the libgcc built for it cannot step through
+  // a signal frame. libunwind starts a fault's walk from the signal's own
+  // context instead, at the instruction that faulted, and any other walk
+  // from here. Its context is a ucontext_t where a signal's can be handed in.
+  _Static_assert(sizeof(unw_context_t) == sizeof(ucontext_t), "sppc: libunwind's context is not a ucontext_t");
+  unw_context_t context;
+  unw_cursor_t cursor;
+  if (uctx != NULL) {
+    memcpy(&context, uctx, sizeof context);
+    if (unw_init_local2(&cursor, &context, UNW_INIT_SIGNAL_FRAME) < 0) { return (size_t)0; }
+  }
+  else {
+    unw_getcontext(&context);
+    if (unw_init_local(&cursor, &context) < 0) { return (size_t)0; }
+  }
+  size_t n = (size_t)0;
+  do {
+    unw_word_t ip;
+    // A zero return address is the outermost frame's: past it, a frame
+    // without unwind tables (musl's own start) is only guessed at.
+    if (unw_get_reg(&cursor, UNW_REG_IP, &ip) < 0 || ip == 0) { break; }
+    frames[n++] = (void*)(uintptr_t)ip;
+  }
+  while (n < max && unw_step(&cursor) > 0);
+  return n;
+#endif
 }
 
 _gnu_cold
 inline void const* _sppc_bt_context_pc(void const *uctx) {
   ucontext_t const *const uc = (ucontext_t const*)uctx;
-#if defined(__x86_64__)
-  return (void const*)uc->uc_mcontext.gregs[REG_RIP];
-#elif defined(__aarch64__)
+#if SPPC_ARCH_X86_64
+  return (void const*)(uintptr_t)uc->uc_mcontext.gregs[REG_RIP];
+#elif SPPC_ARCH_ARM64
   return (void const*)uc->uc_mcontext.pc;
+#elif SPPC_ARCH_S390X
+  return (void const*)uc->uc_mcontext.psw.addr;
+#elif SPPC_ARCH_X86
+  return (void const*)uc->uc_mcontext.gregs[REG_EIP];
+#elif SPPC_ARCH_PPC64
+  return (void const*)uc->uc_mcontext.gp_regs[32]; // PT_NIP
+#elif SPPC_ARCH_RISCV64
+  return (void const*)uc->uc_mcontext.__gregs[REG_PC];
+#elif SPPC_ARCH_ARM
+  return (void const*)uc->uc_mcontext.arm_pc;
+#elif SPPC_ARCH_MIPS || SPPC_ARCH_MIPS64
+  return (void const*)(uintptr_t)uc->uc_mcontext.pc;
+#elif SPPC_ARCH_LOONGARCH64
+  return (void const*)uc->uc_mcontext.__pc;
+#elif SPPC_ARCH_M68K
+  return (void const*)(uintptr_t)uc->uc_mcontext.gregs[R_PC];
+#elif SPPC_ARCH_SPARC64
+  // Linux hands a sparc64 handler the kernel's sigcontext, not a
+  // ucontext_t, whatever the declaration says.
+  (void)uc;
+  return (void const*)(uintptr_t)((struct sigcontext const*)uctx)->sigc_regs.tpc;
 #else
   (void)uc;
   return NULL;
