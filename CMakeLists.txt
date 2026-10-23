@@ -8,6 +8,16 @@ option(SPPC_BUILD_TESTS "Build the tests and register them with ctest" ON)
 
 find_package(Threads REQUIRED)
 
+# Without glibc (musl), the crash reporter walks the stack with libunwind:
+# musl has no "backtrace", and its libgcc cannot step through a signal frame.
+include(CheckSymbolExists)
+check_symbol_exists(__GLIBC__ "features.h" SPPC_GLIBC)
+set(SPPC_UNWIND_LIBS)
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT SPPC_GLIBC)
+  find_library(SPPC_LIBUNWIND unwind REQUIRED)
+  set(SPPC_UNWIND_LIBS ${SPPC_LIBUNWIND})
+endif ()
+
 # Compiled once, into both the shared library and each test:
 # the tests reach the runtime's internals, which the library
 # does not export.
@@ -24,6 +34,15 @@ target_compile_definitions(
   sppc_objects PUBLIC
   _FILE_OFFSET_BITS=64
   DEBUG_BUILD=$<IF:$<CONFIG:Debug>,1,0>)
+
+# Unwind tables for every function, so the crash reporter's backtrace walks
+# through sppc and, being public, the tests, and through a signal's frame.
+# Already the default on x86, aarch64, s390x, powerpc and riscv; not on arm,
+# mips, sparc or m68k.
+if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(
+    sppc_objects PUBLIC $<$<COMPILE_LANGUAGE:C>:-fasynchronous-unwind-tables>)
+endif ()
 
 # Only what the code marks "_sppc_api" / "_sppc_export" leaves
 # the library; everything else, the context switch included,
@@ -46,7 +65,7 @@ endif ()
 add_library(
   ${PROJECT_NAME} SHARED $<TARGET_OBJECTS:sppc_objects>)
 target_link_libraries(
-  ${PROJECT_NAME} PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+  ${PROJECT_NAME} PRIVATE Threads::Threads ${CMAKE_DL_LIBS} ${SPPC_UNWIND_LIBS})
 
 # The same link hardening the compiler gives the executable,
 # so the runtime it loads is not the one writable ".got.plt"
@@ -80,12 +99,20 @@ if (SPPC_BUILD_TESTS)
       sppc_objects_blocking PUBLIC
       $<TARGET_PROPERTY:sppc_objects,INTERFACE_COMPILE_DEFINITIONS>
       SPPC_ASYNC_BLOCKING=1)
+    target_compile_options(
+      sppc_objects_blocking PUBLIC
+      $<TARGET_PROPERTY:sppc_objects,INTERFACE_COMPILE_OPTIONS>)
     list(APPEND SPPC_TEST_BACKENDS blocking)
 
     # The ring's own fallback, taken when "io_uring_setup" fails
     # (an old kernel, or a sandbox): the default build run with
-    # the call failed by seccomp.
-    add_executable(no_uring tests/no_uring.c)
+    # the call failed by seccomp. Not under an emulator: qemu-user
+    # has no ring and no seccomp, so every run there is already
+    # one without the ring.
+    if (NOT CMAKE_CROSSCOMPILING_EMULATOR)
+      add_executable(no_uring tests/no_uring.c)
+      target_include_directories(no_uring PRIVATE headers)
+    endif ()
   endif ()
 
   file(GLOB SPPC_TESTS CONFIGURE_DEPENDS tests/test_*.c)
@@ -101,7 +128,7 @@ if (SPPC_BUILD_TESTS)
       endif ()
       add_executable(${name} ${source})
       target_link_libraries(
-        ${name} PRIVATE ${objects} Threads::Threads ${CMAKE_DL_LIBS})
+        ${name} PRIVATE ${objects} Threads::Threads ${CMAKE_DL_LIBS} ${SPPC_UNWIND_LIBS})
 
       # The tests check with "assert", including calls made only
       # inside one, so a release build's NDEBUG must not compile
@@ -131,7 +158,7 @@ if (SPPC_BUILD_TESTS)
   if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     add_test(NAME test_strict_c17
       COMMAND ${CMAKE_C_COMPILER} -std=c17 -pedantic-errors -Wall -Wextra -Wvla -Werror
-      -fsyntax-only -I${CMAKE_CURRENT_SOURCE_DIR}/headers
+      -fsyntax-only -D_FILE_OFFSET_BITS=64 -I${CMAKE_CURRENT_SOURCE_DIR}/headers
       ${CMAKE_CURRENT_SOURCE_DIR}/sources/sppc/sppc.c)
   endif ()
 endif ()

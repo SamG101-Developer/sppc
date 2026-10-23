@@ -2,8 +2,9 @@
 
 /// The pthread calls sppc needs beyond POSIX: waits against a chosen clock,
 /// spin locks, a once that fits in a handle, and try-locks that say EBUSY
-/// for a lock this thread already holds. glibc has them all; Darwin has
-/// none, so they are built here from what it does have. Each takes the glibc call's arguments and
+/// for a lock this thread already holds. glibc has them all; musl lacks the
+/// clock-based waits and Darwin has none, so they are built here from what
+/// each does have. Each takes the glibc call's arguments and
 /// returns as it does (0 or an error number), under an "_sppc_" name, so
 /// nothing claims a pthread name a later SDK might declare itself.
 
@@ -23,15 +24,79 @@ typedef pthread_once_t _sppc_once_t;
 #define _sppc_pthread_once pthread_once
 #define _sppc_pthread_rwlock_tryrdlock pthread_rwlock_tryrdlock
 #define _sppc_pthread_rwlock_trywrlock pthread_rwlock_trywrlock
-#define _sppc_pthread_mutex_clocklock pthread_mutex_clocklock
-#define _sppc_pthread_rwlock_clockrdlock pthread_rwlock_clockrdlock
-#define _sppc_pthread_rwlock_clockwrlock pthread_rwlock_clockwrlock
-#define _sppc_pthread_cond_clockwait pthread_cond_clockwait
 #define _sppc_pthread_spin_init pthread_spin_init
 #define _sppc_pthread_spin_lock pthread_spin_lock
 #define _sppc_pthread_spin_trylock pthread_spin_trylock
 #define _sppc_pthread_spin_unlock pthread_spin_unlock
 #define _sppc_pthread_spin_destroy pthread_spin_destroy
+
+#if defined(__GLIBC__)
+
+#define _sppc_pthread_mutex_clocklock pthread_mutex_clocklock
+#define _sppc_pthread_rwlock_clockrdlock pthread_rwlock_clockrdlock
+#define _sppc_pthread_rwlock_clockwrlock pthread_rwlock_clockwrlock
+#define _sppc_pthread_cond_clockwait pthread_cond_clockwait
+
+#else
+
+// musl has only the POSIX timed waits, against CLOCK_REALTIME (the clock a
+// condition variable made with no attributes waits on). A deadline on any
+// other clock becomes the real-time instant as far off as it is: a step of
+// the real-time clock during the wait moves it, as glibc's calls would not.
+
+/// @p deadline on @p clock as a real-time deadline, into @p out. EINVAL for
+/// a clock that cannot be read.
+_gnu_inline _gnu_nonnull(2, 3)
+int _sppc_realtime_deadline(const clockid_t clock, struct timespec const *deadline, struct timespec *out) {
+  if (clock == CLOCK_REALTIME) {
+    *out = *deadline;
+    return 0;
+  }
+  struct timespec now, real;
+  if (clock_gettime(clock, &now) != 0 || clock_gettime(CLOCK_REALTIME, &real) != 0) { return EINVAL; }
+  out->tv_sec = real.tv_sec + (deadline->tv_sec - now.tv_sec);
+  out->tv_nsec = real.tv_nsec + (deadline->tv_nsec - now.tv_nsec);
+  while (out->tv_nsec < 0) {
+    out->tv_nsec += 1000000000L;
+    out->tv_sec -= 1;
+  }
+  while (out->tv_nsec >= 1000000000L) {
+    out->tv_nsec -= 1000000000L;
+    out->tv_sec += 1;
+  }
+  return 0;
+}
+
+_gnu_inline _gnu_nonnull(1, 3)
+int _sppc_pthread_mutex_clocklock(pthread_mutex_t *mutex, const clockid_t clock, struct timespec const *deadline) {
+  struct timespec real;
+  const int err = _sppc_realtime_deadline(clock, deadline, &real);
+  return err != 0 ? err : pthread_mutex_timedlock(mutex, &real);
+}
+
+_gnu_inline _gnu_nonnull(1, 3)
+int _sppc_pthread_rwlock_clockrdlock(pthread_rwlock_t *rwlock, const clockid_t clock, struct timespec const *deadline) {
+  struct timespec real;
+  const int err = _sppc_realtime_deadline(clock, deadline, &real);
+  return err != 0 ? err : pthread_rwlock_timedrdlock(rwlock, &real);
+}
+
+_gnu_inline _gnu_nonnull(1, 3)
+int _sppc_pthread_rwlock_clockwrlock(pthread_rwlock_t *rwlock, const clockid_t clock, struct timespec const *deadline) {
+  struct timespec real;
+  const int err = _sppc_realtime_deadline(clock, deadline, &real);
+  return err != 0 ? err : pthread_rwlock_timedwrlock(rwlock, &real);
+}
+
+_gnu_inline _gnu_nonnull(1, 2, 4)
+int _sppc_pthread_cond_clockwait(pthread_cond_t *cond, pthread_mutex_t *mutex, const clockid_t clock,
+  struct timespec const *deadline) {
+  struct timespec real;
+  const int err = _sppc_realtime_deadline(clock, deadline, &real);
+  return err != 0 ? err : pthread_cond_timedwait(cond, mutex, &real);
+}
+
+#endif
 
 #elif SPPC_KERNEL_DARWIN
 

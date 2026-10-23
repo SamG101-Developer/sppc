@@ -14,6 +14,7 @@
 /// No struct here has hidden padding: the S++ side declares the same fields in
 /// the same order, so every byte is a named field.
 
+#include <stddef.h>
 #include <stdint.h>
 
 // ==================== STRUCTS ====================
@@ -86,7 +87,7 @@ typedef struct sppc_pollfd {
 /// One buffer for "sppc_readv" / "sppc_writev".
 typedef struct sppc_iovec {
   void *base;
-  uint64_t len;
+  size_t len;
 } sppc_iovec;
 
 /// A set of descriptors for "sppc_select", below 1024: descriptor n is bit

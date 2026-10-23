@@ -68,6 +68,14 @@
 #define SPPC_ARCH_X86    0
 #define SPPC_ARCH_ARM64  0
 #define SPPC_ARCH_ARM    0
+#define SPPC_ARCH_S390X  0
+#define SPPC_ARCH_PPC64  0
+#define SPPC_ARCH_RISCV64 0
+#define SPPC_ARCH_MIPS   0
+#define SPPC_ARCH_MIPS64 0
+#define SPPC_ARCH_LOONGARCH64 0
+#define SPPC_ARCH_M68K   0
+#define SPPC_ARCH_SPARC64 0
 
 #if defined(__x86_64__) || defined(_M_X64)
   #undef  SPPC_ARCH_X86_64
@@ -81,6 +89,30 @@
 #elif defined(__arm__) || defined(_M_ARM)
   #undef  SPPC_ARCH_ARM
   #define SPPC_ARCH_ARM 1
+#elif defined(__s390x__)
+  #undef  SPPC_ARCH_S390X
+  #define SPPC_ARCH_S390X 1
+#elif defined(__powerpc64__)
+  #undef  SPPC_ARCH_PPC64
+  #define SPPC_ARCH_PPC64 1
+#elif defined(__riscv) && __riscv_xlen == 64
+  #undef  SPPC_ARCH_RISCV64
+  #define SPPC_ARCH_RISCV64 1
+#elif defined(__mips__) && _MIPS_SIM == _ABIO32
+  #undef  SPPC_ARCH_MIPS
+  #define SPPC_ARCH_MIPS 1
+#elif defined(__mips__) && _MIPS_SIM == _ABI64
+  #undef  SPPC_ARCH_MIPS64
+  #define SPPC_ARCH_MIPS64 1
+#elif defined(__loongarch__) && __loongarch_grlen == 64
+  #undef  SPPC_ARCH_LOONGARCH64
+  #define SPPC_ARCH_LOONGARCH64 1
+#elif defined(__m68k__)
+  #undef  SPPC_ARCH_M68K
+  #define SPPC_ARCH_M68K 1
+#elif defined(__sparc__) && defined(__arch64__)
+  #undef  SPPC_ARCH_SPARC64
+  #define SPPC_ARCH_SPARC64 1
 #else
   #error "SPPC: Unsupported architecture"
 #endif
@@ -92,6 +124,17 @@
 #define SPPC_ABI_WIN64     0
 #define SPPC_ABI_AAPCS64   0
 #define SPPC_ABI_WIN_ARM64 0
+#define SPPC_ABI_S390X     0
+#define SPPC_ABI_SYSV_I386 0
+#define SPPC_ABI_PPC64_ELFV2 0
+#define SPPC_ABI_PPC64_ELFV1 0
+#define SPPC_ABI_RISCV_LP64D 0
+#define SPPC_ABI_AAPCS32   0
+#define SPPC_ABI_MIPS_O32  0
+#define SPPC_ABI_MIPS_N64  0
+#define SPPC_ABI_LOONGARCH_LP64D 0
+#define SPPC_ABI_M68K_SYSV 0
+#define SPPC_ABI_SPARC_V9  0
 
 #if SPPC_PLATFORM_WINDOWS && SPPC_ARCH_X86_64
   #undef  SPPC_ABI_WIN64
@@ -105,8 +148,49 @@
 #elif SPPC_ARCH_ARM64
   #undef  SPPC_ABI_AAPCS64
   #define SPPC_ABI_AAPCS64 1
+#elif SPPC_ARCH_S390X
+  #undef  SPPC_ABI_S390X
+  #define SPPC_ABI_S390X 1
+#elif SPPC_ARCH_X86 && !SPPC_PLATFORM_WINDOWS
+  #undef  SPPC_ABI_SYSV_I386
+  #define SPPC_ABI_SYSV_I386 1
+#elif SPPC_ARCH_PPC64 && defined(_CALL_ELF) && _CALL_ELF == 2
+  #undef  SPPC_ABI_PPC64_ELFV2
+  #define SPPC_ABI_PPC64_ELFV2 1
+#elif SPPC_ARCH_PPC64
+  #undef  SPPC_ABI_PPC64_ELFV1
+  #define SPPC_ABI_PPC64_ELFV1 1
+#elif SPPC_ARCH_RISCV64 && defined(__riscv_float_abi_double)
+  #undef  SPPC_ABI_RISCV_LP64D
+  #define SPPC_ABI_RISCV_LP64D 1
+#elif SPPC_ARCH_ARM && defined(__ARM_EABI__) && !SPPC_PLATFORM_WINDOWS
+  #undef  SPPC_ABI_AAPCS32
+  #define SPPC_ABI_AAPCS32 1
+#elif SPPC_ARCH_MIPS
+  #undef  SPPC_ABI_MIPS_O32
+  #define SPPC_ABI_MIPS_O32 1
+#elif SPPC_ARCH_MIPS64
+  #undef  SPPC_ABI_MIPS_N64
+  #define SPPC_ABI_MIPS_N64 1
+#elif SPPC_ARCH_LOONGARCH64 && defined(__loongarch_double_float)
+  #undef  SPPC_ABI_LOONGARCH_LP64D
+  #define SPPC_ABI_LOONGARCH_LP64D 1
+#elif SPPC_ARCH_M68K
+  #undef  SPPC_ABI_M68K_SYSV
+  #define SPPC_ABI_M68K_SYSV 1
+#elif SPPC_ARCH_SPARC64
+  #undef  SPPC_ABI_SPARC_V9
+  #define SPPC_ABI_SPARC_V9 1
 #else
   #error "SPPC: Unsupported ABI"
+#endif
+
+// Byte order, for the layouts that differ with it. msvc only targets
+// little-endian machines.
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+  #define SPPC_ENDIAN_BIG 1
+#else
+  #define SPPC_ENDIAN_BIG 0
 #endif
 
 // Set from cmake; a build that doesn't say is a release build.

@@ -17,6 +17,26 @@
   #include "switch_sysv_x86_64.S"
 #elif SPPC_ABI_AAPCS64
   #include "switch_aapcs64.S"
+#elif SPPC_ABI_S390X
+  #include "switch_s390x.S"
+#elif SPPC_ABI_SYSV_I386
+  #include "switch_sysv_i386.S"
+#elif SPPC_ABI_PPC64_ELFV2 || SPPC_ABI_PPC64_ELFV1
+  #include "switch_ppc64.S"
+#elif SPPC_ABI_RISCV_LP64D
+  #include "switch_riscv_lp64d.S"
+#elif SPPC_ABI_AAPCS32
+  #include "switch_aapcs32.S"
+#elif SPPC_ABI_MIPS_O32
+  #include "switch_mips_o32.S"
+#elif SPPC_ABI_MIPS_N64
+  #include "switch_mips_n64.S"
+#elif SPPC_ABI_LOONGARCH_LP64D
+  #include "switch_loongarch_lp64d.S"
+#elif SPPC_ABI_M68K_SYSV
+  #include "switch_m68k_sysv.S"
+#elif SPPC_ABI_SPARC_V9
+  #include "switch_sparc_v9.S"
 #else
   #error "the green-thread runtime has no context switch for this calling convention"
 #endif

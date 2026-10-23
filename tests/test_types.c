@@ -99,8 +99,22 @@ static void check_values(void) {
   int lk = -1;
   CHECK(_sppc_to_os_value(SPPC_F_WRLCK, t, n, &lk) == 0 && lk == F_WRLCK);
 
+  // Through the table or not, every platform's numbers are sppc's: the
+  // aliases too, which powerpc, mips and sparc give numbers of their own.
   CHECK(_sppc_errno(ENOENT) == SPPC_ENOENT && _sppc_errno(ETIMEDOUT) == SPPC_ETIMEDOUT);
   CHECK(_sppc_errno(0) == 0);
+  CHECK(_sppc_errno(EAGAIN) == SPPC_EAGAIN && _sppc_errno(EWOULDBLOCK) == SPPC_EAGAIN);
+  CHECK(_sppc_errno(EDEADLK) == SPPC_EDEADLK && _sppc_errno(EINPROGRESS) == SPPC_EINPROGRESS);
+  CHECK(_sppc_errno(ECONNREFUSED) == SPPC_ECONNREFUSED && _sppc_errno(EOWNERDEAD) == SPPC_EOWNERDEAD);
+  CHECK(_sppc_errno(ENOTSUP) == SPPC_EOPNOTSUPP && _sppc_errno(EOPNOTSUPP) == SPPC_EOPNOTSUPP);
+  CHECK(_sppc_errno(ENOSYS) == SPPC_ENOSYS && _sppc_errno(ELOOP) == SPPC_ELOOP);
+#ifdef EDEADLOCK
+  CHECK(_sppc_errno(EDEADLOCK) == SPPC_EDEADLK);
+#endif
+#if !_SPPC_ERRNO_IDENTITY
+  // Anything without a counterpart is SPPC_EIO.
+  CHECK(_sppc_errno(-1) == SPPC_EIO && _sppc_errno(100000) == SPPC_EIO);
+#endif
 #if SPPC_KERNEL_DARWIN
   // Every Darwin number becomes an sppc one, and none of them 0: the ones
   // with a counterpart exactly, and the rest SPPC_EIO.
@@ -108,12 +122,8 @@ static void check_values(void) {
     const int s = _sppc_errno(e);
     CHECK(s > 0 && s <= SPPC_EHWPOISON);
   }
-  CHECK(_sppc_errno(EAGAIN) == SPPC_EAGAIN && _sppc_errno(EWOULDBLOCK) == SPPC_EAGAIN);
-  CHECK(_sppc_errno(EDEADLK) == SPPC_EDEADLK && _sppc_errno(EINPROGRESS) == SPPC_EINPROGRESS);
-  CHECK(_sppc_errno(ECONNREFUSED) == SPPC_ECONNREFUSED && _sppc_errno(EOWNERDEAD) == SPPC_EOWNERDEAD);
-  CHECK(_sppc_errno(ENOTSUP) == SPPC_EOPNOTSUPP && _sppc_errno(EOPNOTSUPP) == SPPC_EOPNOTSUPP);
   CHECK(_sppc_errno(ENOATTR) == SPPC_ENODATA && _sppc_errno(EBADARCH) == SPPC_ENOEXEC);
-  CHECK(_sppc_errno(EAUTH) == SPPC_EIO && _sppc_errno(ELAST + 1) == SPPC_EIO && _sppc_errno(-1) == SPPC_EIO);
+  CHECK(_sppc_errno(EAUTH) == SPPC_EIO && _sppc_errno(ELAST + 1) == SPPC_EIO);
 #endif
 }
 

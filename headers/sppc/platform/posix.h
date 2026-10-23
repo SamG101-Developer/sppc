@@ -16,9 +16,11 @@
 #include <sppc/types.h>
 #include <sppc/async.h>
 #include <sppc/backtrace.h>
+#include <sppc/platform/errno.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <locale.h>
 #include <netinet/tcp.h>
 #include <pthread.h>
@@ -33,7 +35,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/mman.h>
-#include <sys/poll.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
@@ -187,22 +189,6 @@ bool _sppc_table_is_identity(_sppc_pair const *table, const size_t n) {
   return true;
 }
 
-// ---------- errors ----------
-
-/// The platform's error number as sppc's.
-_gnu_inline
-int _sppc_errno(const int err) {
-#if SPPC_KERNEL_LINUX
-  // sppc's numbers are Linux's; platform/linux.h checks every one of them.
-  return err;
-#elif SPPC_KERNEL_DARWIN
-  // A table, defined in platform/darwin.h ahead of this file.
-  return _sppc_errno_darwin(err);
-#else
-#error "sppc: no errno translation for this platform yet"
-#endif
-}
-
 // ---------- values every POSIX system shares ----------
 
 _Static_assert(SPPC_S_IFMT == S_IFMT && SPPC_S_IFSOCK == S_IFSOCK && SPPC_S_IFLNK == S_IFLNK &&
@@ -273,8 +259,11 @@ int _sppc_from_os_open_flags(const int flags) {
   static const _sppc_pair modes[] = {_SPPC_PAIR(O_RDONLY), _SPPC_PAIR(O_WRONLY), _SPPC_PAIR(O_RDWR)};
   size_t n;
   _sppc_pair const *const table = _sppc_open_flags_table(&n);
-  return _sppc_from_os_value(flags & O_ACCMODE, modes, _SPPC_COUNT(modes), 0) |
-    _sppc_from_os_flags(flags & ~O_ACCMODE, table, n);
+  // The access mode's bits, not O_ACCMODE: musl's includes O_PATH (as its
+  // O_SEARCH), which would be read as a mode and lost as a flag.
+  const int access = O_RDONLY | O_WRONLY | O_RDWR;
+  return _sppc_from_os_value(flags & access, modes, _SPPC_COUNT(modes), 0) |
+    _sppc_from_os_flags(flags & ~access, table, n);
 }
 
 /// A mode passed in (to create or chmod): permission bits only.
@@ -366,7 +355,8 @@ _sppc_pair const* _sppc_lock_types_table(size_t *_sppc_restrict n) {
 }
 
 // The layouts "sppc_poll", "sppc_readv"/"_writev" and "sppc_select" pass
-// straight through: every POSIX system lays these out the same way.
+// straight through: every POSIX system lays these out the same way, but for
+// "sppc_select" on a 32-bit big-endian one (below).
 _Static_assert(sizeof(sppc_pollfd) == sizeof(struct pollfd) && offsetof(struct pollfd, fd) == offsetof(sppc_pollfd, fd)
   && offsetof(struct pollfd, events) == offsetof(sppc_pollfd, events)
   && offsetof(struct pollfd, revents) == offsetof(sppc_pollfd, revents), "sppc: struct pollfd differs");
@@ -419,7 +409,10 @@ int _sppc_to_os_madvise(const int advice, int *_sppc_restrict out) {
 
 // ---------- sockets ----------
 
-_Static_assert(sizeof(sppc_sockaddr_storage) == sizeof(struct sockaddr_storage)
+// Only ever handed to the platform as room for an address, with the
+// platform's own length, so it need only be as large and as aligned:
+// m68k's is 126 bytes, not 128.
+_Static_assert(sizeof(sppc_sockaddr_storage) >= sizeof(struct sockaddr_storage)
   && _Alignof(sppc_sockaddr_storage) >= _Alignof(struct sockaddr_storage), "sppc: sockaddr_storage differs");
 
 /// The platform's view of an address only sppc ever reads or writes.
@@ -782,13 +775,20 @@ _sppc_api int sppc_pthread_create(const sppc_closure start_routine, uint64_t *_s
   sppc_closure *const cl = (sppc_closure*)malloc(sizeof *cl);
   if (cl == NULL) { free(start_routine.env); return SPPC_ENOMEM; }
   *cl = start_routine;
-  _extract_err(int) pthread_create((pthread_t*)out, NULL, _sppc_thread_entry, cl);
+  // Stored as a value, as every reader takes it: a pthread_t narrower than
+  // the handle, written through it, lands in the wrong half when big-endian.
+  pthread_t thread;
+  _extract_err(int) pthread_create(&thread, NULL, _sppc_thread_entry, cl);
   if (err != 0) { free(cl); free(start_routine.env); }
+  else { *out = (uint64_t)(uintptr_t)thread; }
   _return_normalized_pthread_err
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1)
 _sppc_api int sppc_pthread_join(uint64_t const *_sppc_restrict handle) {
+  // POSIX lets a join of the calling thread fail or hang; glibc fails it,
+  // musl hangs, so it is refused here.
+  if (pthread_equal((pthread_t)(uintptr_t)*handle, pthread_self())) { return SPPC_EDEADLK; }
   _extract_err(int) pthread_join((pthread_t)(uintptr_t)*handle, NULL);
   _return_normalized_pthread_err
 }
@@ -1255,7 +1255,11 @@ _sppc_api void* sppc_mmap(const int fd, const size_t length, const int prot, con
 _posix_syscall(10)
 _gnu_inline _gnu_nonnull(1)
 _sppc_api int sppc_memprotect(void *addr, const size_t size, const int prot) {
-  if ((prot & ~_SPPC_PROT_ALL) != 0) { return SPPC_EINVAL; }
+  // POSIX refuses an address off a page boundary; musl's "mprotect" rounds
+  // it down instead, and would change the page before it.
+  if ((prot & ~_SPPC_PROT_ALL) != 0 || (uintptr_t)addr % (uintptr_t)sysconf(_SC_PAGESIZE) != 0) {
+    return SPPC_EINVAL;
+  }
   _extract_err(int) mprotect(addr, size, prot);
   _return_normalized_err
 }
@@ -1319,6 +1323,25 @@ _sppc_api int sppc_access(char const *_sppc_restrict path, const int flags, int 
 }
 
 _posix_syscall(23)
+/// sppc's descriptor sets as the platform's, in place, and back again: the
+/// same swap. Descriptor n is bit (n % 64) of sppc's 64-bit word n / 64, and
+/// of the platform's "long" n / (8 * sizeof(long)), so the bytes are the same
+/// but where a long is 32 bits and big-endian: there each word's two halves
+/// are the other way round.
+_gnu_inline
+void _sppc_fd_sets_to_os(sppc_fd_set *const sets[3]) {
+#if SPPC_ENDIAN_BIG && ULONG_MAX == 0xFFFFFFFFUL
+  for (int s = 0; s < 3; ++s) {
+    if (sets[s] == NULL) { continue; }
+    for (size_t i = 0; i < _SPPC_COUNT(sets[s]->bits); ++i) {
+      sets[s]->bits[i] = sets[s]->bits[i] << 32 | sets[s]->bits[i] >> 32;
+    }
+  }
+#else
+  (void)sets;
+#endif
+}
+
 _gnu_inline _gnu_restrict_access(read_write, 2) _gnu_restrict_access(read_write, 3)
 _gnu_restrict_access(read_write, 4) _gnu_restrict_access(read_write, 5)
 _gnu_restrict_access(write_only, 6) _gnu_nonnull(6)
@@ -1331,7 +1354,10 @@ _sppc_api int sppc_select(const int nfds, sppc_fd_set *_sppc_restrict readfds, s
     *out_n = -1;
     return SPPC_EINVAL;
   }
+  sppc_fd_set *const sets[] = {readfds, writefds, exceptfds};
+  _sppc_fd_sets_to_os(sets);
   _extract_err(int) select(nfds, (fd_set*)readfds, (fd_set*)writefds, (fd_set*)exceptfds, timeout ? &tv : NULL);
+  _sppc_fd_sets_to_os(sets); // the same swap back
   if (timeout != NULL) { _sppc_from_os_timeval(&tv, timeout); } // Linux leaves the time left in it.
   _sret_normalised_store(out_n)
   _return_normalized_err
@@ -1966,9 +1992,9 @@ _sppc_api void sppc_check_failed(const uint32_t check, const uint64_t a, const u
   switch (check) {
     case SPPC_CHECK_INDEX:
       _sppc_bt_put("index ");
-      _sppc_bt_put_dec((size_t)a);
+      _sppc_bt_put_dec(a);
       _sppc_bt_put(" out of bounds for length ");
-      _sppc_bt_put_dec((size_t)b);
+      _sppc_bt_put_dec(b);
       break;
     case SPPC_CHECK_CONVERSION:
       _sppc_bt_put("integer conversion reached for a width pair it is not defined for");
@@ -1978,21 +2004,21 @@ _sppc_api void sppc_check_failed(const uint32_t check, const uint64_t a, const u
       break;
     case SPPC_CHECK_SLICE_ORDER:
       _sppc_bt_put("slice ");
-      _sppc_bt_put_dec((size_t)a);
+      _sppc_bt_put_dec(a);
       _sppc_bt_put("..");
-      _sppc_bt_put_dec((size_t)b);
+      _sppc_bt_put_dec(b);
       _sppc_bt_put(" ends before it starts");
       break;
     case SPPC_CHECK_SLICE_END:
       _sppc_bt_put("slice end ");
-      _sppc_bt_put_dec((size_t)a);
+      _sppc_bt_put_dec(a);
       _sppc_bt_put(" out of bounds for length ");
-      _sppc_bt_put_dec((size_t)b);
+      _sppc_bt_put_dec(b);
       break;
     case SPPC_CHECK_FLOAT_TO_INT:
       _sppc_bt_put("float out of range for ");
       _sppc_bt_put(b != 0 ? "S" : "U");
-      _sppc_bt_put_dec((size_t)a);
+      _sppc_bt_put_dec(a);
       _sppc_bt_put(", or NaN");
       break;
     case SPPC_CHECK_FFI_UNWIND:
@@ -2014,7 +2040,7 @@ _sppc_api void sppc_check_failed(const uint32_t check, const uint64_t a, const u
       break;
     default:
       _sppc_bt_put("unknown check ");
-      _sppc_bt_put_dec((size_t)check);
+      _sppc_bt_put_dec(check);
       break;
   }
   _sppc_bt_put("\n");
@@ -2028,7 +2054,7 @@ _sppc_api void sppc_check_failed(const uint32_t check, const uint64_t a, const u
 /// one with external linkage may not call (C17 6.7.4p3).
 _gnu_inline
 uint16_t _sppc_net16(const uint16_t v) {
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#if SPPC_ENDIAN_BIG
   return v;
 #else
   return (uint16_t)(v << 8 | v >> 8);
