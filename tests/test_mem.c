@@ -38,7 +38,7 @@ static void check_heap(void) {
   // A request no machine can meet fails rather than returning something. The
   // result is kept volatile, or the compiler drops an allocation nothing uses
   // and assumes it succeeded.
-  volatile size_t huge = SIZE_MAX / 2;
+  volatile size_t huge = SIZE_MAX / 2 + 1;
   void *volatile big = sppc_malloc(huge);
   CHECK(big == NULL);
   sppc_free(big);

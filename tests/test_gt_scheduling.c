@@ -44,7 +44,7 @@ int main(void) {
   printf("order:"); for (int i = 0; i < order_n; ++i) printf(" %d", order[i]); printf("\n");
   printf("sum=%ld (want 6)\n", sum_cell);
   assert(sum_cell == 6);
-  assert(sppc_await(ha) == EINVAL);   // retired handle is refused, not answered
+  assert(sppc_await(ha) == SPPC_EINVAL);   // retired handle is refused, not answered
 
   long deep_out = 0;
   deep_env_t *de = malloc(sizeof *de); de->out = &deep_out;
