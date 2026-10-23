@@ -38,7 +38,7 @@ Type mapping (C -> S++, see std::cffi):
     _Bool / bool                 CBool
     char                         CUChar (plain char's signedness is not portable)
     signed / unsigned char       CChar / CUChar
-    other integers, enums        by size: CShort/CInt/CLong, CUShort/CUInt/CULong
+    other integers, enums        by size: CShort/CInt/CInt64, CUShort/CUInt/CUInt64
     size_t / ssize_t             CSizeT / CSSizeT
     float / double               CFloat / CDouble
     struct foo / foo_t           CFoo (a "cls" is generated for it)
@@ -84,8 +84,8 @@ SPP_KEYWORDS = frozenset({
     "true", "type", "use", "with",
 })
 
-SIGNED_BY_SIZE = {1: "CChar", 2: "CShort", 4: "CInt", 8: "CLong"}
-UNSIGNED_BY_SIZE = {1: "CUChar", 2: "CUShort", 4: "CUInt", 8: "CULong"}
+SIGNED_BY_SIZE = {1: "CChar", 2: "CShort", 4: "CInt", 8: "CInt64"}
+UNSIGNED_BY_SIZE = {1: "CUChar", 2: "CUShort", 4: "CUInt", 8: "CUInt64"}
 SIGNED_KINDS = {TK.SCHAR, TK.SHORT, TK.INT, TK.LONG, TK.LONGLONG, TK.WCHAR}
 UNSIGNED_KINDS = {TK.UCHAR, TK.USHORT, TK.UINT, TK.ULONG, TK.ULONGLONG, TK.CHAR16, TK.CHAR32}
 
@@ -313,9 +313,9 @@ class Generator:
             if -2 ** 31 <= value < 2 ** 31:
                 spp_type = "CInt"
             elif -2 ** 63 <= value < 2 ** 63:
-                spp_type = "CLong"
+                spp_type = "CInt64"
             else:
-                spp_type = "CULong"
+                spp_type = "CUInt64"
             self._uses.add(spp_type)
             self._add_constant(cursor.spelling, spp_type, value)
 
