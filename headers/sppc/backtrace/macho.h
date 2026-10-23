@@ -6,6 +6,7 @@
 /// from a file. Frames come from walking the frame-pointer chain, which both
 /// Apple ABIs keep in every function. The signal half is backtrace/posix.h.
 
+#include <sppc/config.h>
 #include <sppc/backtrace/common.h>
 #include <dlfcn.h>
 #include <mach-o/loader.h>
@@ -151,7 +152,7 @@ inline void _sppc_bt_prepare(void) {}
 /// hint space, so it does nothing on a core without pointer authentication.
 _gnu_cold
 inline uintptr_t _sppc_bt_strip(uintptr_t addr) {
-#if defined(__aarch64__)
+#if SPPC_ARCH_ARM64
   register uintptr_t x30 __asm__("x30") = addr;
   __asm__("hint #7" : "+r"(x30)); // xpaclri
   return x30;
@@ -185,10 +186,10 @@ inline size_t _sppc_bt_frames(void **frames, const size_t max, void const *uctx)
   uintptr_t fp;
   if (uctx != NULL) {
     _STRUCT_MCONTEXT64 const *const mc = ((ucontext_t const*)uctx)->uc_mcontext;
-#if defined(__x86_64__)
+#if SPPC_ARCH_X86_64
     frames[n++] = (void*)(uintptr_t)mc->__ss.__rip;
     fp = (uintptr_t)mc->__ss.__rbp;
-#elif defined(__aarch64__)
+#elif SPPC_ARCH_ARM64
     const uintptr_t pc = _sppc_bt_strip((uintptr_t)__darwin_arm_thread_state64_get_pc(mc->__ss));
     const uintptr_t lr = _sppc_bt_strip((uintptr_t)__darwin_arm_thread_state64_get_lr(mc->__ss));
     fp = (uintptr_t)__darwin_arm_thread_state64_get_fp(mc->__ss);
@@ -233,9 +234,9 @@ inline size_t _sppc_bt_frames(void **frames, const size_t max, void const *uctx)
 _gnu_cold
 inline void const* _sppc_bt_context_pc(void const *uctx) {
   _STRUCT_MCONTEXT64 const *const mc = ((ucontext_t const*)uctx)->uc_mcontext;
-#if defined(__x86_64__)
+#if SPPC_ARCH_X86_64
   return (void const*)(uintptr_t)mc->__ss.__rip;
-#elif defined(__aarch64__)
+#elif SPPC_ARCH_ARM64
   return (void const*)_sppc_bt_strip((uintptr_t)__darwin_arm_thread_state64_get_pc(mc->__ss));
 #else
   (void)mc;
