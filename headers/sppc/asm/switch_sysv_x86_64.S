@@ -1,4 +1,5 @@
-// The context switch for the System V x86_64 calling convention (Linux, macOS).
+// The context switch for the System V x86_64 calling convention (Linux, macOS,
+// and Linux x32).
 // Saves the callee-saved registers and the sse/x87 control words on the
 // current stack, stores the stack pointer through the first argument, loads
 // the next one from the second, and restores the same block from there.
@@ -27,8 +28,15 @@ _SPPC_GT_SWITCH:
   stmxcsr 0(%rsp)
   fnstcw  4(%rsp)
 
+#if defined(__ILP32__)
+  // x32: the same convention with 4-byte pointers, so the slots are 4
+  // bytes; the stack is below 4GiB, so its pointer's top half is 0.
+  mov  %esp, (%rdi)
+  mov  (%rsi), %esp
+#else
   mov  %rsp, (%rdi)
   mov  (%rsi), %rsp
+#endif
 
   ldmxcsr 0(%rsp)
   fldcw   4(%rsp)
