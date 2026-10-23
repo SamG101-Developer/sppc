@@ -45,6 +45,10 @@ inline char const* _sppc_bt_signal_name(const int sig) {
 /// for a fault, and NULL for a failure reported by call.
 _gnu_cold
 inline void _sppc_bt_print(void const *uctx, void const *first_pc) {
+  // What the report says so far goes out first: the walk below is the one
+  // part of it that can itself fault (an unwinder misreading a signal frame,
+  // say), and a report cut off there still says what happened.
+  _sppc_bt_flush();
   void *frames[_SPPC_BT_MAX_FRAMES];
   const size_t n = _sppc_bt_frames(frames, _SPPC_BT_MAX_FRAMES, uctx);
   const bool first_is_fault = uctx != NULL;
@@ -56,9 +60,19 @@ inline void _sppc_bt_print(void const *uctx, void const *first_pc) {
   // just past the end of its function when the call was the last thing in it
   // (a call to something that does not return always is), so those are
   // looked up one byte back.
+  // A thumb return address has its low bit set, where the unwinder's are
+  // the instruction's own; a SPARC one is the call itself, where the
+  // unwinder's is where it returns to, 8 bytes on. A fault's is exact.
+#if SPPC_ARCH_ARM
+  void const *const want = (void const*)((uintptr_t)first_pc & ~(uintptr_t)1);
+#elif SPPC_ARCH_SPARC64
+  void const *const want = first_is_fault ? first_pc : (void const*)((uintptr_t)first_pc + 8);
+#else
+  void const *const want = first_pc;
+#endif
   size_t start = (size_t)0;
   for (size_t i = 0; i < n; ++i) {
-    if (frames[i] == first_pc) {
+    if (frames[i] == want) {
       start = i;
       break;
     }
