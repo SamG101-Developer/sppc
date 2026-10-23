@@ -7,9 +7,12 @@
 # spp spells it (<arch>-<os>[-<env>]: "aarch64-macos", not
 # "aarch64-macos-clang"), or spp rejects the folder; "files"
 # what goes in it; "cross" the triple a target is cross-built
-# for on an x86-64 runner, "arch" its cpu, "qemu" the emulator
+# for on an x86-64 runner ("toolchain" its gcc package, where that
+# is not gcc-<cross>), "arch" its cpu, "qemu" the emulator
 # its tests run under, if they cannot run natively, and
-# "packages" anything else they need to run. Every
+# "packages" anything else they need to run; "test: false" builds
+# a target the runner cannot run at all (x32: Ubuntu's kernels
+# leave the x32 syscalls out, and qemu-user has none). Every
 # target builds every time, so a port's progress shows, but
 # only a "ready" one counts: an unready target may fail
 # without failing the build, and never uploads, so it is
@@ -55,8 +58,8 @@ jobs:
           - { target: mips-linux-gnu,      os: ubuntu-24.04,     compiler: mips-linux-gnu-gcc, cross: mips-linux-gnu, arch: mips, qemu: mips, required: true, ready: false, files: libsppc.so }
           - { target: mipsel-linux-gnu,    os: ubuntu-24.04,     compiler: mipsel-linux-gnu-gcc, cross: mipsel-linux-gnu, arch: mipsel, qemu: mipsel, required: true, ready: false, files: libsppc.so }
           - { target: mips64el-linux-gnuabi64, os: ubuntu-24.04, compiler: mips64el-linux-gnuabi64-gcc, cross: mips64el-linux-gnuabi64, arch: mips64el, qemu: mips64el, required: true, ready: false, files: libsppc.so }
-          - { target: loongarch64-linux-gnu, os: ubuntu-24.04,   compiler: loongarch64-linux-gnu-gcc, cross: loongarch64-linux-gnu, arch: loongarch64, qemu: loongarch64, required: false, ready: false, files: libsppc.so }
-          - { target: x86_64-linux-gnux32, os: ubuntu-24.04,     compiler: x86_64-linux-gnux32-gcc, cross: x86-64-linux-gnux32, arch: x86_64, packages: libc6-x32, required: false, ready: false, files: libsppc.so }
+          - { target: loongarch64-linux-gnu, os: ubuntu-24.04,   compiler: loongarch64-linux-gnu-gcc-14, cross: loongarch64-linux-gnu, toolchain: gcc-14-loongarch64-linux-gnu, arch: loongarch64, qemu: loongarch64, required: false, ready: false, files: libsppc.so }
+          - { target: x86_64-linux-gnux32, os: ubuntu-24.04,     compiler: x86_64-linux-gnux32-gcc, cross: x86-64-linux-gnux32, arch: x86_64, packages: libc6-x32, test: false, required: false, ready: false, files: libsppc.so }
           - { target: m68k-linux-gnu,      os: ubuntu-24.04,     compiler: m68k-linux-gnu-gcc, cross: m68k-linux-gnu, arch: m68k, qemu: m68k, required: true, ready: false, files: libsppc.so }
           - { target: sparcv9-linux-gnu,   os: ubuntu-24.04,     compiler: sparc64-linux-gnu-gcc, cross: sparc64-linux-gnu, arch: sparc64, qemu: sparc64, required: true, ready: false, files: libsppc.so }
 
@@ -108,7 +111,7 @@ jobs:
         if: matrix.cross
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9  # v1.6.3
         with:
-          packages: gcc-${{ matrix.cross }} ${{ matrix.packages }}
+          packages: ${{ matrix.toolchain || format('gcc-{0}', matrix.cross) }} ${{ matrix.packages }}
           version: 1
 
       # The newest qemu, not the runner's (8.2): its ppc64le unwinds out
@@ -151,6 +154,7 @@ jobs:
           cmake --build build --config Release --parallel
 
       - name: Test
+        if: matrix.test != false
         run: ctest --test-dir build --build-config Release --output-on-failure
 
       - name: Collect the binaries
