@@ -66,11 +66,12 @@ extern void _sppc_bt_put(char const *s);
 extern void _sppc_bt_put_symbol(char const *name);
 extern void _sppc_bt_flush(void);
 extern void _sppc_bt_put_hex(uintptr_t v);
-extern void _sppc_bt_put_dec(size_t v);
+extern void _sppc_bt_put_dec(uint64_t v);
 extern char const* _sppc_bt_signal_name(int sig);
 #if SPPC_KERNEL_LINUX
 extern void _sppc_bt_load(_sppc_bt_object *obj, char const *path);
 extern _sppc_bt_object* _sppc_bt_object_for(Dl_info const *info);
+extern uintptr_t _sppc_bt_sym_code(_sppc_bt_object const *obj, ElfW(Sym) const *s);
 #elif SPPC_KERNEL_DARWIN
 extern bool _sppc_bt_image_for(struct mach_header_64 const *mh, uintptr_t pc, _sppc_bt_image *out);
 extern uintptr_t _sppc_bt_strip(uintptr_t addr);

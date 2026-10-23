@@ -90,7 +90,7 @@ inline void _sppc_bt_put_hex(uintptr_t v) {
 }
 
 _gnu_cold
-inline void _sppc_bt_put_dec(size_t v) {
+inline void _sppc_bt_put_dec(uint64_t v) {
   char buf[21];
   size_t i = sizeof buf - 1;
   buf[i] = '\0';
