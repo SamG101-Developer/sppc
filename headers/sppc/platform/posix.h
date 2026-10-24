@@ -773,13 +773,13 @@ void* _sppc_thread_entry(void *closure) {
 _gnu_inline _gnu_restrict_access(write_only, 2) _gnu_nonnull(2)
 _sppc_api int sppc_pthread_create(const sppc_closure start_routine, uint64_t *_sppc_restrict out) {
   sppc_closure *const cl = (sppc_closure*)malloc(sizeof *cl);
-  if (cl == NULL) { free(start_routine.env); return SPPC_ENOMEM; }
+  if (cl == NULL) { _sppc_closure_discard(start_routine); return SPPC_ENOMEM; }
   *cl = start_routine;
   // Stored as a value, as every reader takes it: a pthread_t narrower than
   // the handle, written through it, lands in the wrong half when big-endian.
   pthread_t thread;
   _extract_err(int) pthread_create(&thread, NULL, _sppc_thread_entry, cl);
-  if (err != 0) { free(cl); free(start_routine.env); }
+  if (err != 0) { free(cl); _sppc_closure_discard(start_routine); }
   else { *out = (uint64_t)(uintptr_t)thread; }
   _return_normalized_pthread_err
 }
@@ -859,18 +859,22 @@ _sppc_api int sppc_pthread_once_init(uint64_t *_sppc_restrict out) {
 }
 
 extern _sppc_thread_local sppc_closure _sppc_once_closure;
+extern _sppc_thread_local int _sppc_once_ran;
 
 _gnu_inline_va
 void _sppc_once_entry(void) {
   const sppc_closure call = _sppc_once_closure;
+  _sppc_once_ran = 1;
   call.fn(call.env);
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_nonnull(1)
 _sppc_api int sppc_pthread_once(uint64_t const *_sppc_restrict once, const sppc_closure func) {
   _sppc_once_closure = func;
+  _sppc_once_ran = 0;
   _extract_err(int) _sppc_pthread_once((_sppc_once_t*)once, _sppc_once_entry);
-  free(func.env);
+  if (_sppc_once_ran) { free(func.env); }
+  else { _sppc_closure_discard(func); }
   _return_normalized_pthread_err
 }
 
