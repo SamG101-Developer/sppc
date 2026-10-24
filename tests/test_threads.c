@@ -99,16 +99,28 @@ static uint64_t once;
 static _Atomic int once_runs = 0;
 static uint64_t once_start;
 
+/// A closure's environment starts with its header ("sppc_closure_env"):
+/// the runtime gives up the closures of the callers that lose the race
+/// through it.
+typedef struct {
+  sppc_closure_env head;
+  int one;
+} once_env;
+
 static void once_body(void *e) {
-  once_runs += *(int*)e;
+  once_runs += ((once_env*)e)->one;
+}
+
+static sppc_closure once_closure(void) {
+  once_env *const env = sppc_malloc(sizeof *env);
+  *env = (once_env){{1, NULL}, 1};
+  return (sppc_closure){once_body, env};
 }
 
 static void call_once(void *e) {
   (void)e;
   sppc_pthread_barrier_wait(&once_start); // all at once, to race for it
-  int *one = sppc_malloc(sizeof *one);
-  *one = 1;
-  sppc_pthread_once(&once, (sppc_closure){once_body, one});
+  sppc_pthread_once(&once, once_closure());
 }
 
 static void check_once(void) {
@@ -119,9 +131,7 @@ static void check_once(void) {
   for (int i = 0; i < 4; ++i) { CHECK(sppc_pthread_join(&t[i]) == 0); }
   CHECK(once_runs == 1);
   // And never again, from this thread either.
-  int *one = sppc_malloc(sizeof *one);
-  *one = 1;
-  CHECK(sppc_pthread_once(&once, (sppc_closure){once_body, one}) == 0 && once_runs == 1);
+  CHECK(sppc_pthread_once(&once, once_closure()) == 0 && once_runs == 1);
   CHECK(sppc_pthread_barrier_destroy(&once_start) == 0);
 }
 

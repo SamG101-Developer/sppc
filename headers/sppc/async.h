@@ -47,7 +47,7 @@
 _gnu_inline _gnu_restrict_access(write_only, 1) _gnu_nonnull(1)
 _sppc_api int sppc_async(int *handle, const sppc_closure body) {
   const int err = _gt_spawn(handle, body, _gt_trampoline);
-  if (err != 0) { free(body.env); }
+  if (err != 0) { _sppc_closure_discard(body); }
   return err;
 }
 

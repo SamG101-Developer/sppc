@@ -3,6 +3,7 @@
 pthread_mutex_t _stdin_mutex;
 pthread_mutex_t _stdout_mutex;
 _sppc_thread_local sppc_closure _sppc_once_closure;
+_sppc_thread_local int _sppc_once_ran;
 pthread_mutex_t _stderr_mutex;
 
 _sppc_export _sppc_tls_initial_exec
