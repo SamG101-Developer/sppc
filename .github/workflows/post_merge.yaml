@@ -199,5 +199,5 @@ jobs:
           if [ -n "$(gh pr list --repo "$STL_REPO" --head "$STL_BRANCH" --state open --json number --jq '.[].number')" ]; then
             gh pr edit "$STL_BRANCH" --repo "$STL_REPO" --body "$body"
           else
-            gh pr create --repo "$STL_REPO" --base master --head "$STL_BRANCH" --title "$STL_BRANCH" --body "$body"
+            gh pr create --repo "$STL_REPO" --base master --head "$STL_BRANCH" --title "sppc: bump binary" --body "$body"
           fi
