@@ -11,7 +11,3 @@ Collection of functions exposed from this library include:
 - pthread wrappers (threading, mutexes, condition variables, etc)
 - memory management functions (allocation, comparison, manipulation)
 - string manipulation functions (copy, compare, search, etc)
-
-AI Usage
-- Scanning for bugs
-- Test suites
