@@ -74,6 +74,13 @@ static void check_anonymous_map(void) {
   CHECK(sppc_madvise(p, &len, SPPC_MADV_WILLNEED) == 0);
   CHECK(sppc_madvise(p, &len, 77) == SPPC_EINVAL);
 
+#if SPPC_KERNEL_FREEBSD
+  // FreeBSD cannot give Linux's MADV_DONTNEED, so refuses it, keeping the
+  // contents.
+  CHECK(sppc_madvise(p, &len, SPPC_MADV_DONTNEED) == SPPC_ENOSYS && p[0] == 'a' && p[len - 1] == 'z');
+  CHECK(sppc_mlock(p, page_size()) == 0);
+  CHECK(sppc_munlock(p, page_size()) == 0);
+#else
   // MADV_DONTNEED on private anonymous memory throws the contents away.
   CHECK(sppc_madvise(p, &len, SPPC_MADV_DONTNEED) == 0);
   CHECK(p[0] == 0 && p[len - 1] == 0);
@@ -85,6 +92,7 @@ static void check_anonymous_map(void) {
   CHECK(sppc_madvise(p, &len, SPPC_MADV_DONTNEED) == SPPC_EINVAL && p[0] == 'a');
   CHECK(sppc_munlock(p, page_size()) == 0);
   CHECK(sppc_madvise(p, &len, SPPC_MADV_DONTNEED) == 0 && p[0] == 0);
+#endif
 
   // Protection really protects: a write to a read-only page faults.
   const size_t one = page_size();
@@ -115,7 +123,11 @@ static void check_anonymous_map(void) {
   if (s == NULL) { return; }
   s[0] = 'a';
   s[len - 1] = 'z';
+#if SPPC_KERNEL_FREEBSD
+  CHECK(sppc_madvise(s, &len, SPPC_MADV_DONTNEED) == SPPC_ENOSYS && s[0] == 'a' && s[len - 1] == 'z');
+#else
   CHECK(sppc_madvise(s, &len, SPPC_MADV_DONTNEED) == 0 && s[0] == 'a' && s[len - 1] == 'z');
+#endif
   CHECK(sppc_munmap(s, &len) == 0);
 
   // Values sppc has no name for are refused before reaching the platform.

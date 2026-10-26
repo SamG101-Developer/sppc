@@ -1,8 +1,9 @@
 #pragma once
 
-/// Crash reporting's format half where executables are ELF: Linux. Frames
-/// come from glibc's "backtrace", and names from each loaded object's own
-/// symbol table, read from its file. The signal half is backtrace/posix.h.
+/// Crash reporting's format half where executables are ELF: Linux and
+/// FreeBSD. Frames come from glibc's or FreeBSD's "backtrace" (libunwind on
+/// musl), and names from each loaded object's own symbol table, read from its
+/// file. The signal half is backtrace/posix.h.
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -12,13 +13,14 @@
 #include <sppc/backtrace/common.h>
 #include <dlfcn.h>
 #include <elf.h>
-#if defined(__GLIBC__)
+#if defined(__GLIBC__) || SPPC_KERNEL_FREEBSD
   #include <execinfo.h>
 #else
   #define UNW_LOCAL_ONLY
   #include <libunwind.h>
 #endif
 #include <fcntl.h>
+#include <limits.h>
 #include <link.h>
 #include <signal.h>
 #include <sys/auxv.h>
@@ -50,6 +52,11 @@ typedef struct {
 extern _sppc_bt_object _sppc_bt_objects[_SPPC_BT_MAX_OBJECTS];
 extern size_t _sppc_bt_nobjects;
 extern void const *_sppc_bt_exe_base;
+#if SPPC_KERNEL_FREEBSD
+/// The executable's own file. FreeBSD mounts no "/proc" by default, so the
+/// path is read from the aux vector before any handler can need it.
+extern char _sppc_bt_exe_path[PATH_MAX];
+#endif
 
 // ==================== SYMBOLS ====================
 
@@ -145,12 +152,18 @@ inline _sppc_bt_object* _sppc_bt_object_for(Dl_info const *info) {
   }
   if (_sppc_bt_nobjects == _SPPC_BT_MAX_OBJECTS) { return NULL; }
 
-  // The executable is found through "/proc/self/exe", because the name the
-  // loader records for it is "argv[0]", which can be relative or anything.
+  // The executable is found through "/proc/self/exe" (FreeBSD: the path the
+  // kernel gave it), because the name the loader records for it is
+  // "argv[0]", which can be relative or anything.
   _sppc_bt_object *const obj = &_sppc_bt_objects[_sppc_bt_nobjects++];
   obj->fbase = info->dli_fbase;
   const bool is_exe = info->dli_fbase == _sppc_bt_exe_base || info->dli_fname == NULL || info->dli_fname[0] != '/';
-  _sppc_bt_load(obj, is_exe ? "/proc/self/exe" : info->dli_fname);
+#if SPPC_KERNEL_FREEBSD
+  char const *const exe = _sppc_bt_exe_path;
+#else
+  char const *const exe = "/proc/self/exe";
+#endif
+  _sppc_bt_load(obj, is_exe ? exe : info->dli_fname);
   return obj;
 }
 
@@ -232,10 +245,25 @@ inline char const* _sppc_bt_resolve(void const *lookup_pc, uintptr_t *out_start,
 
 _gnu_cold
 inline bool _sppc_bt_secure(void) {
+#if SPPC_KERNEL_FREEBSD
+  return issetugid() != 0;
+#else
   return getauxval(AT_SECURE) != 0;
+#endif
 }
 
 inline size_t _sppc_bt_frames(void **frames, size_t max, void const *uctx);
+
+#if SPPC_KERNEL_FREEBSD
+/// The executable's program headers: those of the first object loaded, as
+/// FreeBSD's aux vector does not give them out ("AT_PHDR").
+_gnu_cold
+inline int _sppc_bt_first_phdr(struct dl_phdr_info *info, const size_t size, void *out) {
+  (void)size;
+  *(void const**)out = info->dlpi_phdr;
+  return 1;
+}
+#endif
 
 /// The first walk loads what it needs (glibc's "backtrace" loads libgcc_s),
 /// which allocates. Done here, the handler never has to. The executable's
@@ -246,15 +274,23 @@ inline void _sppc_bt_prepare(void) {
   void *warm[1];
   _sppc_bt_frames(warm, 1, NULL);
 
+#if SPPC_KERNEL_FREEBSD
+  if (elf_aux_info(AT_EXECPATH, _sppc_bt_exe_path, sizeof _sppc_bt_exe_path) != 0) { _sppc_bt_exe_path[0] = '\0'; }
+  void const *phdr = NULL;
+  dl_iterate_phdr(_sppc_bt_first_phdr, &phdr);
+#else
+  void const *const phdr = (void const*)getauxval(AT_PHDR);
+#endif
   Dl_info exe;
-  if (dladdr((void const*)getauxval(AT_PHDR), &exe) != 0) { _sppc_bt_exe_base = exe.dli_fbase; }
+  if (dladdr(phdr, &exe) != 0) { _sppc_bt_exe_base = exe.dli_fbase; }
 }
 
-/// glibc's unwinder reads each frame's unwind tables, and steps through a
-/// signal frame into the code it interrupted, so the context is not needed.
+/// glibc's and FreeBSD's unwinders read each frame's unwind tables, and step
+/// through a signal frame into the code it interrupted, so the context is not
+/// needed.
 _gnu_cold
 inline size_t _sppc_bt_frames(void **frames, const size_t max, void const *uctx) {
-#if defined(__GLIBC__)
+#if defined(__GLIBC__) || SPPC_KERNEL_FREEBSD
   (void)uctx;
   const int n = backtrace(frames, (int)max);
   return n > 0 ? (size_t)n : (size_t)0;
@@ -290,7 +326,11 @@ inline size_t _sppc_bt_frames(void **frames, const size_t max, void const *uctx)
 _gnu_cold
 inline void const* _sppc_bt_context_pc(void const *uctx) {
   ucontext_t const *const uc = (ucontext_t const*)uctx;
-#if SPPC_ARCH_X86_64
+#if SPPC_KERNEL_FREEBSD && SPPC_ARCH_X86_64
+  return (void const*)(uintptr_t)uc->uc_mcontext.mc_rip;
+#elif SPPC_KERNEL_FREEBSD && SPPC_ARCH_ARM64
+  return (void const*)(uintptr_t)uc->uc_mcontext.mc_gpregs.gp_elr;
+#elif SPPC_ARCH_X86_64
   return (void const*)(uintptr_t)uc->uc_mcontext.gregs[REG_RIP];
 #elif SPPC_ARCH_ARM64
   return (void const*)uc->uc_mcontext.pc;

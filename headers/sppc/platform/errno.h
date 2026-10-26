@@ -4,8 +4,8 @@
 /// which most Linux architectures use, so there "_sppc_errno" returns the
 /// number it is given; the preprocessor checks every one of them, and any
 /// that differs picks the table instead. powerpc differs in EDEADLOCK, mips
-/// and sparc in nearly every number, and Darwin past 34 (EAGAIN is 35, not
-/// 11).
+/// and sparc in nearly every number, and Darwin and FreeBSD past 34 (EAGAIN
+/// is 35, not 11).
 
 #include <sppc/config.h>
 #include <sppc/macros.h>
@@ -13,7 +13,7 @@
 #include <errno.h>
 #include <stdint.h>
 
-#if !(SPPC_KERNEL_LINUX || SPPC_KERNEL_DARWIN)
+#if !(SPPC_KERNEL_LINUX || SPPC_KERNEL_DARWIN || SPPC_KERNEL_FREEBSD)
 #error "sppc: no errno translation for this platform yet"
 #endif
 

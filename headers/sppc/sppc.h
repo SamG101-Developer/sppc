@@ -25,6 +25,8 @@
   #include <sppc/platform/linux.h>
 #elif SPPC_KERNEL_DARWIN
   #include <sppc/platform/darwin.h>
+#elif SPPC_KERNEL_FREEBSD
+  #include <sppc/platform/freebsd.h>
 #elif SPPC_PLATFORM_WINDOWS
   #include <sppc/platform/windows.h>
 #endif

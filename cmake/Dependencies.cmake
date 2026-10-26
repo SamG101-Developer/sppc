@@ -18,3 +18,9 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT SPPC_GLIBC)
     list(APPEND SPPC_UNWIND_LIBS "-Wl,--exclude-libs,libunwind.a")
   endif ()
 endif ()
+
+# FreeBSD's "backtrace" is in libexecinfo, part of the base system.
+if (CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+  find_library(SPPC_LIBEXECINFO execinfo REQUIRED)
+  set(SPPC_UNWIND_LIBS ${SPPC_LIBEXECINFO})
+endif ()

@@ -212,7 +212,7 @@ jobs:
         include:
           - { target: x86_64-linux-musl, ready: true }
     container:
-      image: alpine:3.21.9@sha256:f765c92e59538d44c6946f8073bdbffd2e8d5916981161faed1b30aa0ef0c2c5
+      image: alpine:3.24.3@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
       options: --security-opt seccomp=unconfined
     defaults:
       run:
@@ -260,6 +260,56 @@ jobs:
           cp build/libsppc.so dist/
           if readelf -d dist/libsppc.so | grep -q 'NEEDED.*unwind'; then echo "::error::libsppc.so still needs libunwind"; exit 1; fi
           ls -l dist
+
+      - name: Upload the binaries
+        if: inputs.upload && matrix.ready
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: sppc-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  # FreeBSD, in a FreeBSD VM: nothing on a Linux runner can run it, so it is
+  # built natively, with the base system's clang, and tested there. Its pkg
+  # has only cmake 3.31, which is why that is sppc's minimum.
+  build-freebsd:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    continue-on-error: ${{ !matrix.required }}
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        include:
+          - { target: x86_64-freebsd, release: "15.1", required: true, ready: true }
+    steps:
+      # The VM's qemu installs from apt, so sudo stays.
+      - name: Harden Runner
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
+        with:
+          egress-policy: audit
+
+      - name: Checkout sppc
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build and test in FreeBSD
+        uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc  # v1.5.9
+        with:
+          release: ${{ matrix.release }}
+          prepare: pkg install -y cmake
+          run: |
+            cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+            cmake --build build --config Release --parallel "$(sysctl -n hw.ncpu)"
+            ctest --test-dir build --build-config Release --output-on-failure
+            mkdir -p dist
+            cp build/libsppc.so dist/
+
+      - name: Collect the binaries
+        run: ls -l dist
 
       - name: Upload the binaries
         if: inputs.upload && matrix.ready

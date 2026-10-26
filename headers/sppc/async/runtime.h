@@ -28,12 +28,22 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/mman.h>
 #include <time.h>
+
+// "MAP_NORESERVE" keeps Linux from reserving swap for a mapping
+// only part of which is ever touched. FreeBSD has dropped the
+// flag: it never reserves for anonymous memory to begin with.
+#if defined(MAP_NORESERVE)
+  #define _SPPC_MAP_NORESERVE MAP_NORESERVE
+#else
+  #define _SPPC_MAP_NORESERVE 0
+#endif
 
 #define GT_IDX_BITS 20u
 #define GT_IDX_MASK ((1u << GT_IDX_BITS) - 1u)
 #define GT_GEN_MASK 0x7FFu
-#define GT_MAP_FLAGS (MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE)
+#define GT_MAP_FLAGS (MAP_PRIVATE | MAP_ANONYMOUS | _SPPC_MAP_NORESERVE)
 #define GT_STACK_SIZE (128u * 1024u)
 #define GT_STACK_MIN (16u * 1024u)
 #define GT_STACK_CACHE 32u

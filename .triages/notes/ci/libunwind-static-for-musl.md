@@ -14,5 +14,5 @@ has a libunwind `NEEDED`. A shared libunwind (a local Alpine with `libunwind-dev
 **Why:** the shipped library must need only libc, like the glibc targets; checked on 2026-10-26 by linking an spp
 hello world against it and running it in a bare Alpine 3.21 (plus `libgcc`, which spp's programs need, not sppc).
 **How to apply:** bump `LIBUNWIND`/`LIBUNWIND_SHA256` to the newest release like qemu. Locally, reproduce in podman
-with `alpine:3.21` and `--security-opt seccomp=unconfined` (io_uring). Don't add `libunwind-dev` back to the `apk add`:
+with `alpine:3.24.3` (the job's pin) and `--security-opt seccomp=unconfined` (io_uring). Don't add `libunwind-dev` back to the `apk add`:
 its headers would mix with the built ones.

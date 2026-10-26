@@ -3,10 +3,11 @@
 /// The pthread calls sppc needs beyond POSIX: waits against a chosen clock,
 /// spin locks, a once that fits in a handle, and try-locks that say EBUSY
 /// for a lock this thread already holds. glibc has them all; musl lacks the
-/// clock-based waits and Darwin has none, so they are built here from what
-/// each does have. Each takes the glibc call's arguments and
-/// returns as it does (0 or an error number), under an "_sppc_" name, so
-/// nothing claims a pthread name a later SDK might declare itself.
+/// clock-based waits, FreeBSD them and a once that fits, and Darwin has
+/// none, so they are built here from what each does have. Each takes the
+/// glibc call's arguments and returns as it does (0 or an error number),
+/// under an "_sppc_" name, so nothing claims a pthread name a later SDK
+/// might declare itself.
 
 #include <sppc/config.h>
 #include <sppc/macros.h>
@@ -16,12 +17,14 @@
 #include <stdbool.h>
 #include <time.h>
 
-#if SPPC_KERNEL_LINUX
+// The pause between two tries of a lock or once built from tries: from
+// 50 us, doubling up to 1 ms, and never past a deadline.
+#define _SPPC_BACKOFF_MIN_NS 50000L
+#define _SPPC_BACKOFF_MAX_NS 1000000L
+
+#if SPPC_KERNEL_LINUX || SPPC_KERNEL_FREEBSD
 
 typedef pthread_spinlock_t _sppc_spinlock_t;
-typedef pthread_once_t _sppc_once_t;
-#define _SPPC_ONCE_INIT PTHREAD_ONCE_INIT
-#define _sppc_pthread_once pthread_once
 #define _sppc_pthread_rwlock_tryrdlock pthread_rwlock_tryrdlock
 #define _sppc_pthread_rwlock_trywrlock pthread_rwlock_trywrlock
 #define _sppc_pthread_spin_init pthread_spin_init
@@ -30,6 +33,16 @@ typedef pthread_once_t _sppc_once_t;
 #define _sppc_pthread_spin_unlock pthread_spin_unlock
 #define _sppc_pthread_spin_destroy pthread_spin_destroy
 
+#endif
+
+#if SPPC_KERNEL_LINUX
+
+typedef pthread_once_t _sppc_once_t;
+#define _SPPC_ONCE_INIT PTHREAD_ONCE_INIT
+#define _sppc_pthread_once pthread_once
+
+#endif
+
 #if defined(__GLIBC__)
 
 #define _sppc_pthread_mutex_clocklock pthread_mutex_clocklock
@@ -37,12 +50,13 @@ typedef pthread_once_t _sppc_once_t;
 #define _sppc_pthread_rwlock_clockwrlock pthread_rwlock_clockwrlock
 #define _sppc_pthread_cond_clockwait pthread_cond_clockwait
 
-#else
+#elif SPPC_KERNEL_LINUX || SPPC_KERNEL_FREEBSD
 
-// musl has only the POSIX timed waits, against CLOCK_REALTIME (the clock a
-// condition variable made with no attributes waits on). A deadline on any
-// other clock becomes the real-time instant as far off as it is: a step of
-// the real-time clock during the wait moves it, as glibc's calls would not.
+// musl and FreeBSD have only the POSIX timed waits, against CLOCK_REALTIME
+// (the clock a condition variable made with no attributes waits on). A
+// deadline on any other clock becomes the real-time instant as far off as it
+// is: a step of the real-time clock during the wait moves it, as glibc's
+// calls would not.
 
 /// @p deadline on @p clock as a real-time deadline, into @p out. EINVAL for
 /// a clock that cannot be read.
@@ -96,8 +110,6 @@ int _sppc_pthread_cond_clockwait(pthread_cond_t *cond, pthread_mutex_t *mutex, c
   return err != 0 ? err : pthread_cond_timedwait(cond, mutex, &real);
 }
 
-#endif
-
 #elif SPPC_KERNEL_DARWIN
 
 // ---------- deadlines ----------
@@ -116,11 +128,6 @@ int _sppc_time_left(const clockid_t clock, struct timespec const *deadline, stru
   }
   return out->tv_sec < 0 || (out->tv_sec == 0 && out->tv_nsec == 0) ? ETIMEDOUT : 0;
 }
-
-// The pause between two tries of a timed lock: from 50 us, doubling up to
-// 1 ms, and never past the deadline.
-#define _SPPC_BACKOFF_MIN_NS 50000L
-#define _SPPC_BACKOFF_MAX_NS 1000000L
 
 /// Wait out one pause of a timed lock, or report its deadline as passed.
 _gnu_inline_va _gnu_nonnull(2, 3)
@@ -248,13 +255,15 @@ int _sppc_pthread_spin_destroy(_sppc_spinlock_t *spinlock) {
   return 0;
 }
 
-// ---------- once ----------
+#endif
 
-/// Darwin's "pthread_once_t" is 16 bytes, too big for the handle it has to
-/// live in, so once is built on an int: not run, running, or done. The
-/// thread that moves it from not run to running calls the function; any
-/// other waits it out with the timed locks' pauses, as a once is run once
-/// and seldom raced for.
+#if SPPC_KERNEL_DARWIN || SPPC_KERNEL_FREEBSD
+
+/// Darwin's and FreeBSD's "pthread_once_t" is 16 bytes, too big for the
+/// handle it has to live in, so once is built on an int: not run, running,
+/// or done. The thread that moves it from not run to running calls the
+/// function; any other waits it out with the backoff's pauses, as a once is
+/// run once and seldom raced for.
 typedef int _sppc_once_t;
 #define _SPPC_ONCE_INIT 0
 #define _SPPC_ONCE_RUNNING 1

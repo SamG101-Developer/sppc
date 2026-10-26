@@ -177,11 +177,6 @@ _sppc_api int sppc_pthread_barrier_destroy(uint64_t const *_sppc_restrict barrie
 
 // ==================== SYSCALLS ====================
 
-// What the copying fallbacks below move per call: small, as
-// the call may be on a task's stack, and a short count is
-// allowed of both calls they stand in for.
-#define _SPPC_COPY_CHUNK 4096
-
 /// A pipe whose ends close on exec, as "pipe2(O_CLOEXEC)".
 _gnu_inline _gnu_nonnull(1)
 int _sppc_pipe_cloexec(int fds[2]) {
@@ -224,11 +219,8 @@ ssize_t _sppc_sendfile(const int to_fd, const int from_fd, int64_t *offset, cons
   off_t len = count > (size_t)INT64_MAX ? (off_t)INT64_MAX : (off_t)count;
   if (sendfile(from_fd, to_fd, start, &len, NULL, 0) == 0 || len > 0) { sent = (ssize_t)len; }
   else if (errno == ENOTSOCK) {
-    char buf[_SPPC_COPY_CHUNK];
-    const ssize_t got = pread(from_fd, buf, count < sizeof buf ? count : sizeof buf, start);
-    if (got <= 0) { return got; }
-    sent = write(to_fd, buf, (size_t)got);
-    if (sent < 0) { return -1; }
+    sent = _sppc_send_by_copy(to_fd, from_fd, start, count);
+    if (sent <= 0) { return sent; }
   }
   else { return -1; }
 
