@@ -6,17 +6,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 option(SPPC_BUILD_TESTS "Build the tests and register them with ctest" ON)
 
-find_package(Threads REQUIRED)
-
-# Without glibc (musl), the crash reporter walks the stack with libunwind:
-# musl has no "backtrace", and its libgcc cannot step through a signal frame.
-include(CheckSymbolExists)
-check_symbol_exists(__GLIBC__ "features.h" SPPC_GLIBC)
-set(SPPC_UNWIND_LIBS)
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT SPPC_GLIBC)
-  find_library(SPPC_LIBUNWIND unwind REQUIRED)
-  set(SPPC_UNWIND_LIBS ${SPPC_LIBUNWIND})
-endif ()
+include(cmake/Dependencies.cmake)
 
 # Compiled once, into both the shared library and each test:
 # the tests reach the runtime's internals, which the library
@@ -156,9 +146,13 @@ if (SPPC_BUILD_TESTS)
   # creeping back in. gcc and clang only: msvc has no equivalent
   # of -pedantic-errors.
   if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    set(strict_includes -I${CMAKE_CURRENT_SOURCE_DIR}/headers)
+    if (SPPC_LIBUNWIND_INCLUDE)
+      list(APPEND strict_includes -isystem ${SPPC_LIBUNWIND_INCLUDE})
+    endif ()
     add_test(NAME test_strict_c17
       COMMAND ${CMAKE_C_COMPILER} -std=c17 -pedantic-errors -Wall -Wextra -Wvla -Werror
-      -fsyntax-only -D_FILE_OFFSET_BITS=64 -I${CMAKE_CURRENT_SOURCE_DIR}/headers
+      -fsyntax-only -D_FILE_OFFSET_BITS=64 ${strict_includes}
       ${CMAKE_CURRENT_SOURCE_DIR}/sources/sppc/sppc.c)
   endif ()
 endif ()

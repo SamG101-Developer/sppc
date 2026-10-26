@@ -8,7 +8,8 @@
 # "aarch64-macos-clang"), or spp rejects the folder; "files"
 # what goes in it; "cross" the triple a target is cross-built
 # for on an x86-64 runner ("toolchain" its gcc package, where that
-# is not gcc-<cross>), "arch" its cpu, "qemu" the emulator
+# is not gcc-<cross>, or "arm-gnu" for Arm's own release, where
+# Ubuntu has none), "arch" its cpu, "qemu" the emulator
 # its tests run under, if they cannot run natively, and
 # "packages" anything else they need to run; "test: false" builds
 # a target the runner cannot run at all (x32: Ubuntu's kernels
@@ -60,7 +61,8 @@ jobs:
           - { target: mipsel-linux-gnu,    os: ubuntu-24.04,     compiler: mipsel-linux-gnu-gcc, cross: mipsel-linux-gnu, arch: mipsel, qemu: mipsel, required: true, ready: true, files: libsppc.so }
           - { target: mips64el-linux-gnuabi64, os: ubuntu-24.04, compiler: mips64el-linux-gnuabi64-gcc, cross: mips64el-linux-gnuabi64, arch: mips64el, qemu: mips64el, required: true, ready: true, files: libsppc.so }
           - { target: loongarch64-linux-gnu, os: ubuntu-24.04,   compiler: loongarch64-linux-gnu-gcc-14, cross: loongarch64-linux-gnu, toolchain: gcc-14-loongarch64-linux-gnu, arch: loongarch64, qemu: loongarch64, required: false, ready: true, files: libsppc.so }
-          - { target: x86_64-linux-gnux32, os: ubuntu-24.04,     compiler: x86_64-linux-gnux32-gcc, cross: x86-64-linux-gnux32, arch: x86_64, packages: libc6-x32, test: false, required: false, ready: false, files: libsppc.so }
+          - { target: aarch64_be-linux-gnu, os: ubuntu-24.04,    compiler: aarch64_be-none-linux-gnu-gcc, cross: aarch64_be-none-linux-gnu, toolchain: arm-gnu, arch: aarch64_be, qemu: aarch64_be, required: true, ready: true, files: libsppc.so }
+          - { target: x86_64-linux-gnux32, os: ubuntu-24.04,     compiler: x86_64-linux-gnux32-gcc, cross: x86-64-linux-gnux32, arch: x86_64, packages: libc6-x32, test: false, required: true,  ready: true, files: libsppc.so }
           - { target: m68k-linux-gnu,      os: ubuntu-24.04,     compiler: m68k-linux-gnu-gcc, cross: m68k-linux-gnu, arch: m68k, qemu: m68k, required: true, ready: true, files: libsppc.so }
           - { target: sparcv9-linux-gnu,   os: ubuntu-24.04,     compiler: sparc64-linux-gnu-gcc, cross: sparc64-linux-gnu, arch: sparc64, qemu: sparc64, required: true, ready: true, files: libsppc.so }
 
@@ -109,11 +111,28 @@ jobs:
       # tests run with: from the cache of a run before, which holds
       # every package the install pulled in.
       - name: Install the cross toolchain
-        if: matrix.cross
+        if: matrix.cross && matrix.toolchain != 'arm-gnu'
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9  # v1.6.3
         with:
           packages: ${{ matrix.toolchain || format('gcc-{0}', matrix.cross) }} ${{ matrix.packages }}
           version: 1
+
+      # Arm's release carries its own glibc, which qemu loads from
+      # its sysroot rather than /usr/<triple>.
+      - name: Install the Arm toolchain
+        if: matrix.toolchain == 'arm-gnu'
+        env:
+          ARM_GNU: https://gitlab.arm.com/api/v4/projects/tooling%2Fgnu-toolchains-for-arm/packages/generic/gnu-toolchain/15.3.rel2/arm-gnu-toolchain-15.3.rel2-x86_64-aarch64_be-none-linux-gnu.tar.xz
+          ARM_GNU_SHA256: bdf8e9b4c62791c5c3aeeb8ba3791421d73c7d147dd04f0da502716885bcc1d2
+          COMPILER: ${{ matrix.compiler }}
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/arm-gnu.tar.xz" "$ARM_GNU"
+          echo "$ARM_GNU_SHA256  $RUNNER_TEMP/arm-gnu.tar.xz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/arm-gnu"
+          tar -xJf "$RUNNER_TEMP/arm-gnu.tar.xz" -C "$RUNNER_TEMP/arm-gnu" --strip-components=1
+          echo "$RUNNER_TEMP/arm-gnu/bin" >> "$GITHUB_PATH"
+          echo "SYSROOT=$("$RUNNER_TEMP/arm-gnu/bin/$COMPILER" -print-sysroot)" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/arm-gnu/bin/$COMPILER" --version | head -1
 
       # The newest qemu, not the runner's (8.2): its ppc64le unwinds out
       # of a signal handler into a crash, and its mips loses socket
@@ -149,7 +168,7 @@ jobs:
             flags+=(-DCMAKE_SYSTEM_NAME=Linux "-DCMAKE_SYSTEM_PROCESSOR=${ARCH}")
           fi
           if [ -n "$QEMU" ]; then
-            flags+=("-DCMAKE_CROSSCOMPILING_EMULATOR=qemu-${QEMU};-L;/usr/${CROSS}")
+            flags+=("-DCMAKE_CROSSCOMPILING_EMULATOR=qemu-${QEMU};-L;${SYSROOT:-/usr/${CROSS}}")
           fi
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release "${flags[@]}"
           cmake --build build --config Release --parallel
@@ -179,8 +198,8 @@ jobs:
 
   # musl, on a musl system: Alpine's gcc and libgcc are built for it, where a
   # glibc host's musl-gcc wrapper links glibc's libgcc. The crash reporter
-  # walks the stack with libunwind there (the shipped library needs
-  # libunwind.so.8). Docker's default seccomp profile refuses io_uring, so
+  # walks the stack with libunwind there, built here and linked in, so the
+  # shipped library needs only musl. Docker's default seccomp profile refuses io_uring, so
   # the ring would go untested under it.
   build-musl:
     name: ${{ matrix.target }}
@@ -191,7 +210,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - { target: x86_64-linux-musl, ready: false }
+          - { target: x86_64-linux-musl, ready: true }
     container:
       image: alpine:3.21.9@sha256:f765c92e59538d44c6946f8073bdbffd2e8d5916981161faed1b30aa0ef0c2c5
       options: --security-opt seccomp=unconfined
@@ -201,7 +220,7 @@ jobs:
     steps:
       - name: Install the toolchain
         run: |
-          apk add --no-cache build-base linux-headers libunwind-dev py3-pip
+          apk add --no-cache build-base linux-headers py3-pip
           pip install --break-system-packages --root-user-action=ignore "cmake>=4.1"
 
       - name: Checkout sppc
@@ -209,9 +228,27 @@ jobs:
         with:
           persist-credentials: false
 
+      # Alpine's libunwind.a is not position-independent, so cannot go
+      # into a shared library. Only local unwinding is used: the rest is
+      # off, compressed debug info (liblzma) included.
+      - name: Build libunwind
+        env:
+          LIBUNWIND: https://github.com/libunwind/libunwind/releases/download/v1.8.3/libunwind-1.8.3.tar.gz
+          LIBUNWIND_SHA256: be30d910e67f58d82e753231f1357f326a1a088acf126b21ff77e60aab19b90b
+        run: |
+          wget -q -O /tmp/libunwind.tar.gz "$LIBUNWIND"
+          echo "$LIBUNWIND_SHA256  /tmp/libunwind.tar.gz" | sha256sum -c -
+          mkdir /tmp/libunwind
+          tar -xzf /tmp/libunwind.tar.gz -C /tmp/libunwind --strip-components=1
+          cd /tmp/libunwind
+          ./configure --prefix=/opt/libunwind --disable-shared --enable-static --with-pic \
+            --disable-minidebuginfo --disable-zlibdebuginfo --disable-coredump --disable-ptrace \
+            --disable-setjmp --disable-tests --disable-documentation
+          make -j"$(nproc)" install
+
       - name: Build (Release)
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/libunwind
           cmake --build build --config Release --parallel
 
       - name: Test
@@ -221,6 +258,7 @@ jobs:
         run: |
           mkdir -p dist
           cp build/libsppc.so dist/
+          if readelf -d dist/libsppc.so | grep -q 'NEEDED.*unwind'; then echo "::error::libsppc.so still needs libunwind"; exit 1; fi
           ls -l dist
 
       - name: Upload the binaries
