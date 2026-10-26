@@ -70,6 +70,7 @@
 #define SPPC_ARCH_ARM    0
 #define SPPC_ARCH_S390X  0
 #define SPPC_ARCH_PPC64  0
+#define SPPC_ARCH_PPC    0
 #define SPPC_ARCH_RISCV64 0
 #define SPPC_ARCH_MIPS   0
 #define SPPC_ARCH_MIPS64 0
@@ -95,6 +96,9 @@
 #elif defined(__powerpc64__)
   #undef  SPPC_ARCH_PPC64
   #define SPPC_ARCH_PPC64 1
+#elif defined(__powerpc__)
+  #undef  SPPC_ARCH_PPC
+  #define SPPC_ARCH_PPC 1
 #elif defined(__riscv) && __riscv_xlen == 64
   #undef  SPPC_ARCH_RISCV64
   #define SPPC_ARCH_RISCV64 1
@@ -128,6 +132,7 @@
 #define SPPC_ABI_SYSV_I386 0
 #define SPPC_ABI_PPC64_ELFV2 0
 #define SPPC_ABI_PPC64_ELFV1 0
+#define SPPC_ABI_PPC_SYSV  0
 #define SPPC_ABI_RISCV_LP64D 0
 #define SPPC_ABI_AAPCS32   0
 #define SPPC_ABI_MIPS_O32  0
@@ -160,6 +165,9 @@
 #elif SPPC_ARCH_PPC64
   #undef  SPPC_ABI_PPC64_ELFV1
   #define SPPC_ABI_PPC64_ELFV1 1
+#elif SPPC_ARCH_PPC
+  #undef  SPPC_ABI_PPC_SYSV
+  #define SPPC_ABI_PPC_SYSV 1
 #elif SPPC_ARCH_RISCV64 && defined(__riscv_float_abi_double)
   #undef  SPPC_ABI_RISCV_LP64D
   #define SPPC_ABI_RISCV_LP64D 1
