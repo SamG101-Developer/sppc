@@ -283,7 +283,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - { target: x86_64-freebsd, release: "15.1", required: false, ready: false }
+          - { target: x86_64-freebsd, release: "15.1", required: true, ready: true }
     steps:
       # The VM's qemu installs from apt, so sudo stays.
       - name: Harden Runner
