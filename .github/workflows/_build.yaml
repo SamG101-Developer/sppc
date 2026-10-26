@@ -52,6 +52,7 @@ jobs:
           - { target: s390x-linux-gnu,     os: ubuntu-24.04,     compiler: s390x-linux-gnu-gcc, cross: s390x-linux-gnu, arch: s390x, qemu: s390x, required: true, ready: true, files: libsppc.so }
           - { target: powerpc64le-linux-gnu, os: ubuntu-24.04,   compiler: powerpc64le-linux-gnu-gcc, cross: powerpc64le-linux-gnu, arch: ppc64le, qemu: ppc64le, required: true, ready: true, files: libsppc.so }
           - { target: powerpc64-linux-gnu, os: ubuntu-24.04,     compiler: powerpc64-linux-gnu-gcc, cross: powerpc64-linux-gnu, arch: ppc64, qemu: ppc64, required: true, ready: true, files: libsppc.so }
+          - { target: powerpc-linux-gnu,   os: ubuntu-24.04,     compiler: powerpc-linux-gnu-gcc, cross: powerpc-linux-gnu, arch: ppc, qemu: ppc, required: true, ready: true, files: libsppc.so }
           - { target: riscv64-linux-gnu,   os: ubuntu-24.04,     compiler: riscv64-linux-gnu-gcc, cross: riscv64-linux-gnu, arch: riscv64, qemu: riscv64, required: true, ready: true, files: libsppc.so }
           - { target: arm-linux-gnueabihf, os: ubuntu-24.04,     compiler: arm-linux-gnueabihf-gcc, cross: arm-linux-gnueabihf, arch: armv7, qemu: arm, required: true, ready: true, files: libsppc.so }
           - { target: arm-linux-gnueabi,   os: ubuntu-24.04,     compiler: arm-linux-gnueabi-gcc, cross: arm-linux-gnueabi, arch: armv5te, qemu: arm, required: true, ready: true, files: libsppc.so }

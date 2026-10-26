@@ -74,6 +74,15 @@ void* _gt_stack_prime(void *usable, const size_t size, void (*entry)(void)) {
   *(uint64_t*)(base + 512) = descriptor[0];
   *(uint64_t*)(base + 520) = descriptor[1];
   return (void*)base;
+#elif SPPC_ABI_PPC_SYSV
+  // The 432-byte block "_gt_switch" leaves (its back chain, r14-r31,
+  // f14-f31, v20-v31, then lr, cr and fpscr), above which the 16-byte
+  // minimum frame the abi gives every callee: the entry saves its lr
+  // in that frame's second word, and the zero back chain ends unwinding.
+  const uintptr_t base = top - 16 - 432;
+  memset((void*)base, 0, 432 + 16);
+  *(uint32_t*)(base + 416) = (uint32_t)(uintptr_t)entry;
+  return (void*)base;
 #elif SPPC_ABI_AAPCS32
   // From low to high the switch leaves, with a vfp: fpscr and a pad
   // word, d8-d15, then a pad word (r3), r4-r11 and lr; without one,

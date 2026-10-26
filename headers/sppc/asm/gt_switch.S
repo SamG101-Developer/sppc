@@ -23,6 +23,8 @@
   #include "switch_sysv_i386.S"
 #elif SPPC_ABI_PPC64_ELFV2 || SPPC_ABI_PPC64_ELFV1
   #include "switch_ppc64.S"
+#elif SPPC_ABI_PPC_SYSV
+  #include "switch_ppc_sysv.S"
 #elif SPPC_ABI_RISCV_LP64D
   #include "switch_riscv_lp64d.S"
 #elif SPPC_ABI_AAPCS32

@@ -71,15 +71,26 @@ inline void _sppc_bt_print(void const *uctx, void const *first_pc) {
   void const *const want = first_pc;
 #endif
   size_t start = (size_t)0;
+  bool found = false;
   for (size_t i = 0; i < n; ++i) {
     if (frames[i] == want) {
       start = i;
+      found = true;
       break;
     }
   }
 
+  // An unwinder that cannot step through the signal frame (qemu's ppc32
+  // vdso describes it 16 bytes off) never reaches "want", and what it did
+  // find is the reporter's own frames: "want" alone is the honest report.
+  size_t count = n;
+  if (!found && first_pc != NULL) {
+    frames[0] = (void*)(uintptr_t)want;
+    count = (size_t)1;
+  }
+
   _sppc_bt_put("stack backtrace:\n");
-  for (size_t i = start; i < n; ++i) {
+  for (size_t i = start; i < count; ++i) {
     const uintptr_t pc = (uintptr_t)frames[i];
     const uintptr_t lookup = i == start && first_is_fault && first_pc != NULL ? pc : pc - 1;
     uintptr_t sym_start = (uintptr_t)0;

@@ -300,6 +300,8 @@ inline void const* _sppc_bt_context_pc(void const *uctx) {
   return (void const*)uc->uc_mcontext.gregs[REG_EIP];
 #elif SPPC_ARCH_PPC64
   return (void const*)uc->uc_mcontext.gp_regs[32]; // PT_NIP
+#elif SPPC_ARCH_PPC
+  return (void const*)uc->uc_mcontext.uc_regs->gregs[32]; // PT_NIP
 #elif SPPC_ARCH_RISCV64
   return (void const*)uc->uc_mcontext.__gregs[REG_PC];
 #elif SPPC_ARCH_ARM
