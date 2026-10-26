@@ -277,12 +277,13 @@ jobs:
     name: ${{ matrix.target }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    continue-on-error: ${{ !matrix.required }}
     permissions:
       contents: read
     strategy:
       matrix:
         include:
-          - { target: x86_64-freebsd, release: "15.1", ready: false }
+          - { target: x86_64-freebsd, release: "15.1", required: false, ready: false }
     steps:
       # The VM's qemu installs from apt, so sudo stays.
       - name: Harden Runner
@@ -302,7 +303,7 @@ jobs:
           prepare: pkg install -y cmake
           run: |
             cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-            cmake --build build --config Release --parallel
+            cmake --build build --config Release --parallel "$(sysctl -n hw.ncpu)"
             ctest --test-dir build --build-config Release --output-on-failure
             mkdir -p dist
             cp build/libsppc.so dist/

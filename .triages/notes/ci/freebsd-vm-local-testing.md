@@ -16,4 +16,6 @@ with `tar | ssh`, build with the base clang, run ctest.
 --shutdown`, which also empties `/tmp`).
 **How to apply:** FreeBSD's pkg has only cmake 3.31 (quarterly and latest, 2026-10-26), so sppc's minimum was lowered
 from 4.1 to 3.31 rather than build cmake in CI; don't raise it past what FreeBSD's pkg has. CI runs the same in
-`vmactions/freebsd-vm` (`build-freebsd` in `_build.yaml`). `ktrace -i` + `kdump` finds a hung test's last syscall.
+`vmactions/freebsd-vm` (`build-freebsd` in `_build.yaml`). Give `cmake --build --parallel` a number there
+(`"$(sysctl -n hw.ncpu)"`): bare, it passes `-j` alone, which BSD make refuses ("option requires an argument -- j").
+`ktrace -i` + `kdump` finds a hung test's last syscall.
