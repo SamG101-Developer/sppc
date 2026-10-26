@@ -7,7 +7,7 @@
 
 #include <sppc/config.h>
 
-#if SPPC_KERNEL_LINUX
+#if SPPC_OBJECT_ELF
   #include <sppc/backtrace/elf.h>
   #include <sppc/backtrace/posix.h>
 #elif SPPC_KERNEL_DARWIN

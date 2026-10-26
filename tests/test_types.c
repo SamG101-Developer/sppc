@@ -20,14 +20,28 @@ static void check_open_flags(void) {
   OPEN(O_RDONLY); OPEN(O_WRONLY); OPEN(O_RDWR); OPEN(O_CREAT); OPEN(O_EXCL); OPEN(O_NOCTTY); OPEN(O_TRUNC);
   OPEN(O_APPEND); OPEN(O_NONBLOCK); OPEN(O_DSYNC); OPEN(O_ASYNC); OPEN(O_DIRECTORY);
   OPEN(O_NOFOLLOW); OPEN(O_CLOEXEC); OPEN(O_SYNC);
-#if SPPC_KERNEL_LINUX
-  OPEN(O_DIRECT); OPEN(O_NOATIME); OPEN(O_PATH); OPEN(O_TMPFILE);
-#else
-  // Linux's own, which nothing else can honour, so they are refused.
+  // Linux's own, which a platform without them cannot honour, so they are
+  // refused there. FreeBSD has O_DIRECT and O_PATH too.
   int refused = 0;
+  (void)refused;
+#if defined(O_DIRECT)
+  OPEN(O_DIRECT);
+#else
   CHECK(_sppc_to_os_open_flags(SPPC_O_DIRECT, &refused) == SPPC_EINVAL);
+#endif
+#if defined(O_NOATIME)
+  OPEN(O_NOATIME);
+#else
   CHECK(_sppc_to_os_open_flags(SPPC_O_NOATIME, &refused) == SPPC_EINVAL);
+#endif
+#if defined(O_PATH)
+  OPEN(O_PATH);
+#else
   CHECK(_sppc_to_os_open_flags(SPPC_O_PATH, &refused) == SPPC_EINVAL);
+#endif
+#if defined(O_TMPFILE)
+  OPEN(O_TMPFILE);
+#else
   CHECK(_sppc_to_os_open_flags(SPPC_O_TMPFILE, &refused) == SPPC_EINVAL);
 #endif
 #undef OPEN
@@ -41,7 +55,13 @@ static void check_open_flags(void) {
 static void check_values(void) {
   TO_OS(_sppc_to_os_map_flags, MAP_SHARED); TO_OS(_sppc_to_os_map_flags, MAP_PRIVATE);
   TO_OS(_sppc_to_os_map_flags, MAP_FIXED); TO_OS(_sppc_to_os_map_flags, MAP_ANONYMOUS);
+#if defined(MAP_NORESERVE)
   TO_OS(_sppc_to_os_map_flags, MAP_NORESERVE);
+#else
+  // FreeBSD never reserves for anonymous memory, so the flag is no flag.
+  int no_reserve = -1;
+  CHECK(_sppc_to_os_map_flags(SPPC_MAP_NORESERVE, &no_reserve) == 0 && no_reserve == 0);
+#endif
   TO_OS(_sppc_to_os_msync_flags, MS_ASYNC); TO_OS(_sppc_to_os_msync_flags, MS_INVALIDATE);
   TO_OS(_sppc_to_os_msync_flags, MS_SYNC);
   TO_OS(_sppc_to_os_madvise, MADV_NORMAL); TO_OS(_sppc_to_os_madvise, MADV_RANDOM);
@@ -64,7 +84,12 @@ static void check_values(void) {
 
 #define CLOCK(name) do { clockid_t c_ = (clockid_t)-1; CHECK(_sppc_to_os_clock(SPPC_##name, &c_) == 0 && c_ == (name)); } while (0)
   CLOCK(CLOCK_REALTIME); CLOCK(CLOCK_MONOTONIC); CLOCK(CLOCK_PROCESS_CPUTIME_ID); CLOCK(CLOCK_THREAD_CPUTIME_ID);
+#if defined(CLOCK_MONOTONIC_RAW)
   CLOCK(CLOCK_MONOTONIC_RAW);
+#else
+  clockid_t no_raw;
+  CHECK(_sppc_to_os_clock(SPPC_CLOCK_MONOTONIC_RAW, &no_raw) == SPPC_EINVAL);
+#endif
 #if SPPC_KERNEL_LINUX
   CLOCK(CLOCK_REALTIME_COARSE); CLOCK(CLOCK_MONOTONIC_COARSE); CLOCK(CLOCK_BOOTTIME);
 #endif

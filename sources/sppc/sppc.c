@@ -16,10 +16,13 @@ bool _unsafe_stack_wanted = false;
 _sppc_tls_initial_exec _sppc_thread_local gt_runtime *_gt_rt = NULL;
 
 // Crash reporting state (backtrace.h).
-#if SPPC_KERNEL_LINUX
+#if SPPC_OBJECT_ELF
 _sppc_bt_object _sppc_bt_objects[_SPPC_BT_MAX_OBJECTS];
 size_t _sppc_bt_nobjects = 0;
 void const *_sppc_bt_exe_base = NULL;
+#endif
+#if SPPC_KERNEL_FREEBSD
+char _sppc_bt_exe_path[PATH_MAX];
 #endif
 bool _sppc_bt_enabled = true;
 char const *_sppc_bt_off_note = "note: backtraces are off because SPP_BACKTRACE=0\n";
@@ -69,9 +72,12 @@ extern void _sppc_bt_flush(void);
 extern void _sppc_bt_put_hex(uintptr_t v);
 extern void _sppc_bt_put_dec(uint64_t v);
 extern char const* _sppc_bt_signal_name(int sig);
-#if SPPC_KERNEL_LINUX
+#if SPPC_OBJECT_ELF
 extern void _sppc_bt_load(_sppc_bt_object *obj, char const *path);
 extern _sppc_bt_object* _sppc_bt_object_for(Dl_info const *info);
+#if SPPC_KERNEL_FREEBSD
+extern int _sppc_bt_first_phdr(struct dl_phdr_info *info, size_t size, void *out);
+#endif
 extern uintptr_t _sppc_bt_sym_code(_sppc_bt_object const *obj, ElfW(Sym) const *s);
 #elif SPPC_KERNEL_DARWIN
 extern bool _sppc_bt_image_for(struct mach_header_64 const *mh, uintptr_t pc, _sppc_bt_image *out);

@@ -22,8 +22,12 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <locale.h>
+#include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <pthread.h>
+#if SPPC_KERNEL_FREEBSD
+  #include <pthread_np.h>
+#endif
 #include <signal.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -107,6 +111,22 @@ int _sppc_fd_set_flags(const int fd, const bool cloexec, const bool nonblock) {
     if (fl < 0 || fcntl(fd, F_SETFL, fl | O_NONBLOCK) != 0) { return -1; }
   }
   return 0;
+}
+
+// What the copying fallbacks for "sendfile" and "copy_file_range" move per
+// call: small, as the call may be on a task's stack, and a short count is
+// allowed of both calls they stand in for.
+#define _SPPC_COPY_CHUNK 4096
+
+/// Up to a chunk of @p count bytes of @p from_fd at @p start, written to
+/// @p to_fd: "sendfile" to a descriptor the BSDs' own cannot send to, as it
+/// only sends to a socket. Neither file position moves.
+_gnu_inline
+ssize_t _sppc_send_by_copy(const int to_fd, const int from_fd, const off_t start, const size_t count) {
+  char buf[_SPPC_COPY_CHUNK];
+  const ssize_t got = pread(from_fd, buf, count < sizeof buf ? count : sizeof buf, start);
+  if (got <= 0) { return got; }
+  return write(to_fd, buf, (size_t)got);
 }
 
 // ==================== TRANSLATION ====================
@@ -382,9 +402,7 @@ _gnu_inline _gnu_nonnull(2)
 int _sppc_to_os_map_flags(const int flags, int *_sppc_restrict out) {
   static const _sppc_pair table[] = {
     _SPPC_PAIR(MAP_SHARED), _SPPC_PAIR(MAP_PRIVATE), _SPPC_PAIR(MAP_FIXED), _SPPC_PAIR(MAP_ANONYMOUS),
-#ifdef MAP_NORESERVE
-    _SPPC_PAIR(MAP_NORESERVE),
-#endif
+    {SPPC_MAP_NORESERVE, _SPPC_MAP_NORESERVE},
   };
   return _sppc_to_os_flags(flags, table, _SPPC_COUNT(table), out);
 }
@@ -656,6 +674,15 @@ _sppc_api int sppc_unsafe_stack_up(void) {
     pthread_attr_getstack(&attr, &unused_base, &size);
     pthread_attr_destroy(&attr);
   }
+#elif SPPC_KERNEL_FREEBSD
+  pthread_attr_t attr;
+  if (pthread_attr_init(&attr) == 0) {
+    if (pthread_attr_get_np(pthread_self(), &attr) == 0) {
+      void *unused_base;
+      pthread_attr_getstack(&attr, &unused_base, &size);
+    }
+    pthread_attr_destroy(&attr);
+  }
 #elif SPPC_KERNEL_DARWIN
   size = pthread_get_stacksize_np(pthread_self());
 #endif
@@ -673,7 +700,7 @@ _sppc_api int sppc_unsafe_stack_up(void) {
   // address space and only the part actually reached is ever paid for.
   void *const p = mmap(
     NULL, total, PROT_READ | PROT_WRITE,
-    MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | _SPPC_MAP_STACK, -1, 0);
+    MAP_PRIVATE | MAP_ANONYMOUS | _SPPC_MAP_NORESERVE | _SPPC_MAP_STACK, -1, 0);
   if (p == MAP_FAILED) { return _sppc_errno(errno); }
 
   // The guard goes at the low end, which is the end the stack grows
@@ -1140,6 +1167,11 @@ _sppc_api int sppc_open(char const *_sppc_restrict path, const int flags, const 
   }
   _extract_err(int) open(path, os_flags, os_mode);
   _sret_normalised_store(out_fd)
+#if SPPC_KERNEL_FREEBSD
+  // FreeBSD refuses to follow a link with EMLINK, where POSIX (and so sppc)
+  // has ELOOP; EMLINK is for a file with too many links.
+  if (err != 0 && errno == EMLINK && (os_flags & O_NOFOLLOW) != 0) { return SPPC_ELOOP; }
+#endif
   _return_normalized_err
 }
 
@@ -1271,6 +1303,9 @@ _sppc_api int sppc_memprotect(void *addr, const size_t size, const int prot) {
 _posix_syscall(11)
 _gnu_inline _gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)
 _sppc_api int sppc_munmap(void *_sppc_restrict addr, size_t const *_sppc_restrict length) {
+  // As for "sppc_memprotect": FreeBSD's "munmap" rounds an address off a page
+  // boundary down, and would unmap the page before it.
+  if ((uintptr_t)addr % (uintptr_t)sysconf(_SC_PAGESIZE) != 0) { return SPPC_EINVAL; }
   _extract_err(int) munmap(addr, *length);
   _return_normalized_err
 }
@@ -1389,6 +1424,10 @@ _sppc_api int sppc_madvise(void *_sppc_restrict addr, size_t const *_sppc_restri
   if (_sppc_to_os_madvise(advice, &os_advice) != 0) { return SPPC_EINVAL; }
 #if SPPC_KERNEL_DARWIN
   if (advice == SPPC_MADV_DONTNEED) { return _sppc_madvise_dontneed(addr, *length); } // Linux's, not a hint
+#elif SPPC_KERNEL_FREEBSD
+  // FreeBSD's is a hint, and its map cannot tell private anonymous memory
+  // (which Linux's empties) from shared, so Linux's cannot be built on it.
+  if (advice == SPPC_MADV_DONTNEED) { return SPPC_ENOSYS; }
 #endif
   _extract_err(int) madvise(addr, *length, os_advice);
   _return_normalized_err
@@ -1715,9 +1754,9 @@ _posix_syscall(88)
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_nonnull(1)
 _sppc_api int sppc_unlink(char const *_sppc_restrict path) {
   _extract_err(int) unlink(path);
-#if SPPC_KERNEL_DARWIN
-  // Darwin refuses a directory with EPERM, which Linux (and so sppc) keeps
-  // for a file it may not remove.
+#if SPPC_KERNEL_DARWIN || SPPC_KERNEL_FREEBSD
+  // Darwin and FreeBSD refuse a directory with EPERM, which Linux (and so
+  // sppc) keeps for a file it may not remove.
   struct stat st;
   if (err != 0 && errno == EPERM && lstat(path, &st) == 0 && S_ISDIR(st.st_mode)) { return SPPC_EISDIR; }
 #endif

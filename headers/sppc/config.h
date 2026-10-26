@@ -12,6 +12,7 @@
 #define SPPC_PLATFORM_MACOS   0
 #define SPPC_PLATFORM_ANDROID 0
 #define SPPC_PLATFORM_IOS     0
+#define SPPC_PLATFORM_FREEBSD 0
 
 #if defined(_WIN32) || defined(_WIN64) || defined(__CYGWIN__)
   #undef SPPC_PLATFORM_WINDOWS
@@ -29,6 +30,9 @@
 #elif defined (__APPLE__) && defined (__MACH__) && defined (TARGET_OS_IOS) && TARGET_OS_IOS
   #undef SPPC_PLATFORM_IOS
   #define SPPC_PLATFORM_IOS 1
+#elif defined (__FreeBSD__)
+  #undef SPPC_PLATFORM_FREEBSD
+  #define SPPC_PLATFORM_FREEBSD 1
 #else
   #error "SPPC: Unsupported platform"
 #endif
@@ -37,8 +41,13 @@
 // kernel's: io_uring, the Linux syscalls and the ELF loader
 // for Linux and Android; kqueue, Mach-O and the Darwin libc
 // for macOS and iOS. Code keyed on those uses these.
-#define SPPC_KERNEL_LINUX  (SPPC_PLATFORM_UNIX || SPPC_PLATFORM_ANDROID)
-#define SPPC_KERNEL_DARWIN (SPPC_PLATFORM_MACOS || SPPC_PLATFORM_IOS)
+#define SPPC_KERNEL_LINUX   (SPPC_PLATFORM_UNIX || SPPC_PLATFORM_ANDROID)
+#define SPPC_KERNEL_DARWIN  (SPPC_PLATFORM_MACOS || SPPC_PLATFORM_IOS)
+#define SPPC_KERNEL_FREEBSD SPPC_PLATFORM_FREEBSD
+
+// Kernels whose programs and libraries are ELF objects, which
+// the crash reporter reads the symbols of.
+#define SPPC_OBJECT_ELF (SPPC_KERNEL_LINUX || SPPC_KERNEL_FREEBSD)
 
 // Compiler selection macro suite, which detects the current
 // compiler for attribute-specifics (gnu::/clang:: attributes

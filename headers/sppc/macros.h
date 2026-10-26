@@ -21,10 +21,10 @@
   #define _sppc_thread_local __thread
 #endif
 
-// A lock-free test-and-set flag, safe in a signal handler. C11
-// atomics everywhere but msvc, whose C mode only has them
-// behind an experimental switch; the interlocked intrinsic does
-// the same job there.
+// A lock-free test-and-set flag, safe in a signal handler: the
+// compiler's atomic builtins, and on msvc, whose C mode only has
+// atomics behind an experimental switch, the interlocked
+// intrinsic.
 #if SPPC_CC_MSVC
   #include <intrin.h>
   typedef volatile long _sppc_atomic_flag;
@@ -32,11 +32,12 @@
   #define _sppc_atomic_flag_test_and_set(flag) (_InterlockedExchange((flag), 1) != 0)
   #define _sppc_atomic_flag_clear(flag) ((void)_InterlockedExchange((flag), 0))
 #else
-  #include <stdatomic.h>
-  typedef atomic_flag _sppc_atomic_flag;
-  #define _SPPC_ATOMIC_FLAG_INIT ATOMIC_FLAG_INIT
-  #define _sppc_atomic_flag_test_and_set(flag) atomic_flag_test_and_set(flag)
-  #define _sppc_atomic_flag_clear(flag) atomic_flag_clear(flag)
+  // Not <stdatomic.h>: FreeBSD's makes its flag calls static functions,
+  // which an inline function with external linkage may not call.
+  typedef unsigned char _sppc_atomic_flag;
+  #define _SPPC_ATOMIC_FLAG_INIT 0
+  #define _sppc_atomic_flag_test_and_set(flag) __atomic_test_and_set((flag), __ATOMIC_SEQ_CST)
+  #define _sppc_atomic_flag_clear(flag) __atomic_clear((flag), __ATOMIC_SEQ_CST)
 #endif
 
 // The "restrict" pointer tag is C99, but msvc (and any c++
