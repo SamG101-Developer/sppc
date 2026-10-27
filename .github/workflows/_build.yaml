@@ -134,20 +134,24 @@ jobs:
           echo "SYSROOT=$("$RUNNER_TEMP/arm-gnu/bin/$COMPILER" -print-sysroot)" >> "$GITHUB_ENV"
           "$RUNNER_TEMP/arm-gnu/bin/$COMPILER" --version | head -1
 
-      # The newest qemu, not the runner's (8.2): its ppc64le unwinds out
-      # of a signal handler into a crash, and its mips loses socket
-      # timeouts. Debian's build is static, so it runs here unpacked.
+      # Static qemu-user from our qemu fork, not the runner's (8.2): its
+      # ppc64le unwinds out of a signal handler into a crash, and its mips
+      # loses socket timeouts. The fork carries fixes qemu has not shipped
+      # (spp's .triages/upstream-watch.md, U17-U19), ppc32's unwinding
+      # through a signal frame among them; spp pins the same release.
       - name: Install qemu
         if: matrix.qemu
         env:
-          QEMU_DEB: https://deb.debian.org/debian/pool/main/q/qemu/qemu-user_11.1.2+ds-3_amd64.deb
-          QEMU_SHA256: 4bacc2bf647f1756c5f08e7f146161d3eeef9d9f53e5d6412d1b3daca0c93655
+          QEMU_TAG: spp-2026.10.26.2
+          QEMU_SHA256: 7ce31b76d67578ad07c5b746d649f412552e12a251c3b832787ce3a2267b41a9
         run: |
-          curl -fsSL -o "$RUNNER_TEMP/qemu-user.deb" "$QEMU_DEB"
-          echo "$QEMU_SHA256  $RUNNER_TEMP/qemu-user.deb" | sha256sum -c -
-          dpkg-deb -x "$RUNNER_TEMP/qemu-user.deb" "$RUNNER_TEMP/qemu"
-          echo "$RUNNER_TEMP/qemu/usr/bin" >> "$GITHUB_PATH"
-          "$RUNNER_TEMP/qemu/usr/bin/qemu-x86_64" --version | head -1
+          curl -fsSL -o "$RUNNER_TEMP/qemu-user.tar.xz" \
+            "https://github.com/SamG101-Developer/qemu/releases/download/${QEMU_TAG}/qemu-user-static-${QEMU_TAG}-x86_64.tar.xz"
+          echo "$QEMU_SHA256  $RUNNER_TEMP/qemu-user.tar.xz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/qemu"
+          tar -xJf "$RUNNER_TEMP/qemu-user.tar.xz" -C "$RUNNER_TEMP/qemu"
+          echo "$RUNNER_TEMP/qemu/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/qemu/bin/qemu-x86_64" --version | head -1
 
       - name: Set up msvc
         if: matrix.compiler == 'msvc'

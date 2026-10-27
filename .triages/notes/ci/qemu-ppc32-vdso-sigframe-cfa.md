@@ -14,3 +14,5 @@ and in qemu master). A real kernel's vdso is right. 64-bit ppc is unaffected (no
 
 **How to apply:** `_sppc_bt_print` now prints the fault pc alone when the unwinder never reaches it, which keeps
 `test_process` green under qemu. Don't "fix" the ppc32 port for this; drop this note once qemu adds the adjust.
+Tracked as U18 in spp's `.triages/upstream-watch.md`; the qemu patch and issue text are in spp's `.triages/tickets/`.
+CI's qemu, our fork's release ([[qemu-from-spp-fork]]), carries the fix; the fallback stays for any unwinder that stops short.
