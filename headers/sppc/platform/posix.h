@@ -129,6 +129,38 @@ ssize_t _sppc_send_by_copy(const int to_fd, const int from_fd, const off_t start
   return write(to_fd, buf, (size_t)got);
 }
 
+/// "copy_file_range" from each file's position: a read and a
+/// write, each moving its position as the real call does. Darwin
+/// has no "copy_file_range"; Linux and FreeBSD fall back to this
+/// where theirs refuses the two files. A
+/// write that falls short puts the read position back by what
+/// was not written, so nothing read is lost.
+_gnu_inline
+ssize_t _sppc_copy_range(const int fd_in, const int fd_out, const size_t len) {
+  char buf[_SPPC_COPY_CHUNK];
+  if (len == 0) { return 0; }
+  const ssize_t got = read(fd_in, buf, len < sizeof buf ? len : sizeof buf);
+  if (got <= 0) { return got; }
+  ssize_t done = 0;
+  while (done < got) {
+    const ssize_t w = write(fd_out, buf + done, (size_t)(got - done));
+    if (w < 0) {
+      if (errno == EINTR) { continue; }
+      break;
+    }
+    done += w;
+  }
+  if (done < got) {
+    const int err = errno;
+    lseek(fd_in, (off_t)(done - got), SEEK_CUR);
+    if (done == 0) {
+      errno = err;
+      return -1;
+    }
+  }
+  return done;
+}
+
 // ==================== TRANSLATION ====================
 
 // The public api speaks sppc's types and constants (sppc/types.h); these turn

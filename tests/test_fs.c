@@ -190,6 +190,19 @@ static void check_copy(void) {
   CHECK(size_of(dst) == 14);
   CHECK(sppc_copyfile(in, out, 1, 1, &n) == SPPC_EINVAL && n == -1); // no flags defined yet
 
+#ifndef _WIN32
+  // The read and write a copy falls back to where "copy_file_range" refuses the two files (Darwin's only copy): from
+  // each descriptor's own offset, short at the end, 0 once there is nothing left.
+  int64_t at_pos = -1;
+  CHECK(sppc_lseek(in, 0, SPPC_SEEK_SET, &at_pos) == 0);
+  CHECK(sppc_ftruncate(out, 0) == 0);
+  CHECK(sppc_lseek(out, 0, SPPC_SEEK_SET, &at_pos) == 0);
+  CHECK(_sppc_copy_range(in, out, 7) == 7);
+  CHECK(_sppc_copy_range(in, out, 100) == 7);
+  CHECK(_sppc_copy_range(in, out, 100) == 0);
+  CHECK(size_of(dst) == 14);
+#endif
+
   // sendfile with an offset: from there, which it moves on, and not from the
   // descriptor's own offset (left at the end by the copy above).
   int64_t off = 5;

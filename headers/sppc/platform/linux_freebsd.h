@@ -116,8 +116,14 @@ _sppc_api int sppc_copyfile(const int fd_in, const int fd_out, const size_t len,
     *out_n = -1;
     return SPPC_EINVAL;
   }
-  // A partial copy is normal, so the count has to reach the caller.
-  _extract_err(ssize_t) copy_file_range(fd_in, NULL, fd_out, NULL, len, 0);
+  // A partial copy is normal, so the count has to reach the caller. Where the kernel refuses to copy between the two
+  // files (across filesystems before Linux 5.3 and again for some from 5.19, a kernel without the call, a filesystem
+  // that does not support it), the same copy is made by reading and writing.
+  ssize_t copied = copy_file_range(fd_in, NULL, fd_out, NULL, len, 0);
+  if (copied < 0 && (errno == EXDEV || errno == ENOSYS || errno == EOPNOTSUPP)) {
+    copied = _sppc_copy_range(fd_in, fd_out, len);
+  }
+  _extract_err(ssize_t) copied;
   _sret_normalised_store(out_n)
   _return_normalized_err
 }
