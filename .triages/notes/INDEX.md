@@ -9,3 +9,10 @@ Paths are relative to this folder. Read a note before relying on its one-line su
 - [x32 tested locally only](ci/x32-tested-locally-only.md) — ships untested by CI; run its ctest natively before merging arch changes
 - [Static libunwind for musl](ci/libunwind-static-for-musl.md) — CI builds pinned PIC libunwind, linked into libsppc.so; needs only musl
 - [FreeBSD VM for local testing](ci/freebsd-vm-local-testing.md) — cloud-init VM image under KVM, ssh in, build natively; ktrace for hangs
+- [Windows tests from WSL](ci/windows-native-from-wsl.md) — mingw .exe runs natively via interop; msvc through a vcvars64 .bat under cmd.exe
+- [Windows: one heap per C runtime](runtime/windows-crt-heap-per-module.md) — memory sppc frees must come from sppc's allocator; another CRT's malloc corrupts the heap
+- [platform/ is seven files](layout/platform-seven-files.md) — shared, common, posix, linux, darwin, freebsd, windows; anything the same everywhere goes in shared.h/common.h, checked whenever a port adds a function
+- [io_uring ignores O_NONBLOCK](runtime/io-uring-ignores-o-nonblock.md) — ring ops wait on non-blocking fds; `_gt_try_*` decline them so EAGAIN comes from the syscall
+- [msvc /O2 hang on equal args](ci/msvc-o2-hang-equal-args.md) — cl 14.52 never finishes inlining checks on one value passed twice; sppc_mmap forwards out of line
+- [Bindgen libclang/clang mismatch](tools/bindgen-libclang-resource-dir-mismatch.md) — builtin headers from another clang version hide stdint types; tools/main.py now picks a matching clang
+- [Byte pointer params](tools/bindgen-byte-pointer-params.md) — void*/char*/unsigned char* params → CRefBytePtr/CMutBytePtr by constness; returns, fields, handles stay CVoidPtr
