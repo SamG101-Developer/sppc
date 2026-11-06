@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.31)
-project(sppc C ASM)
+project(sppc C)
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
@@ -10,12 +10,29 @@ include(cmake/Dependencies.cmake)
 
 # Compiled once, into both the shared library and each test:
 # the tests reach the runtime's internals, which the library
-# does not export.
-set(SPPC_SOURCES
-  sources/sppc/sppc.c
-  headers/sppc/asm/gt_switch.S)
+# does not export. Windows switches task stacks with fibers,
+# so has no assembly.
+set(SPPC_SOURCES sources/sppc/sppc.c)
+if (NOT WIN32)
+  enable_language(ASM)
+  list(APPEND SPPC_SOURCES headers/sppc/asm/gt_switch.S)
+endif ()
 add_library(
   sppc_objects OBJECT ${SPPC_SOURCES})
+
+# msvc reads a source file without a byte-order mark in the system's
+# code page, and makes narrow string literals in it too; sppc's text is
+# UTF-8, as gcc and clang take it.
+if (MSVC)
+  target_compile_options(sppc_objects PUBLIC /utf-8)
+endif ()
+
+# The Windows threads sleep on "WaitOnAddress", which is in
+# the synchronization api set rather than kernel32; sockets and
+# their errors are Winsock's; random bytes are bcrypt's.
+if (WIN32)
+  target_link_libraries(sppc_objects PUBLIC synchronization ws2_32 bcrypt)
+endif ()
 set_target_properties(
   sppc_objects PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(
@@ -46,7 +63,7 @@ endif ()
 # Fortified libc calls ("__memcpy_chk" and friends). The compiler
 # fails a link against an ffi library without them (this is flag
 # adjustable in the s++ compiler).
-if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+if (NOT WIN32 AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(
     sppc_objects PRIVATE
     "$<$<AND:$<COMPILE_LANGUAGE:C>,$<NOT:$<CONFIG:Debug>>>:-U_FORTIFY_SOURCE;-D_FORTIFY_SOURCE=$<IF:$<PLATFORM_ID:Darwin>,2,3>>")
@@ -55,7 +72,8 @@ endif ()
 add_library(
   ${PROJECT_NAME} SHARED $<TARGET_OBJECTS:sppc_objects>)
 target_link_libraries(
-  ${PROJECT_NAME} PRIVATE Threads::Threads ${CMAKE_DL_LIBS} ${SPPC_UNWIND_LIBS})
+  ${PROJECT_NAME} PRIVATE Threads::Threads ${CMAKE_DL_LIBS} ${SPPC_UNWIND_LIBS}
+  $<$<PLATFORM_ID:Windows>:synchronization ws2_32 bcrypt>)
 
 # The same link hardening the compiler gives the executable,
 # so the runtime it loads is not the one writable ".got.plt"
@@ -75,10 +93,11 @@ if (SPPC_BUILD_TESTS)
 
   # Every test also runs against the blocking i/o backend, the
   # one a platform without its own starts on, where the ring
-  # would otherwise hide it. Only where there is a ring to
-  # compare with: elsewhere it is the only backend.
+  # (Linux) or the completion port (Windows) would otherwise
+  # hide it. Only where there is one to compare with: elsewhere
+  # it is the only backend.
   set(SPPC_TEST_BACKENDS default)
-  if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  if (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR WIN32)
     add_library(
       sppc_objects_blocking OBJECT ${SPPC_SOURCES})
     set_target_properties(
@@ -99,13 +118,28 @@ if (SPPC_BUILD_TESTS)
     # the call failed by seccomp. Not under an emulator: qemu-user
     # has no ring and no seccomp, so every run there is already
     # one without the ring.
-    if (NOT CMAKE_CROSSCOMPILING_EMULATOR)
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
       add_executable(no_uring tests/no_uring.c)
       target_include_directories(no_uring PRIVATE headers)
     endif ()
   endif ()
 
+  # A test whose name ends in "_win" is of Windows' own parts, and
+  # runs there only. Every other test is the public api's, for every
+  # platform; Windows runs those its port has reached, listed here
+  # until the list is all of them.
   file(GLOB SPPC_TESTS CONFIGURE_DEPENDS tests/test_*.c)
+  if (WIN32)
+    set(SPPC_WINDOWS_PORTED
+      test_heap test_time test_threads test_fs test_mem test_net test_process
+      test_gt_scheduling test_gt_stress test_gt_locks test_gt_safestack)
+    list(TRANSFORM SPPC_WINDOWS_PORTED PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/tests/")
+    list(TRANSFORM SPPC_WINDOWS_PORTED APPEND ".c")
+    list(FILTER SPPC_TESTS INCLUDE REGEX "_win\\.c$")
+    list(APPEND SPPC_TESTS ${SPPC_WINDOWS_PORTED})
+  else ()
+    list(FILTER SPPC_TESTS EXCLUDE REGEX "_win\\.c$")
+  endif ()
   foreach (source ${SPPC_TESTS})
     get_filename_component(base ${source} NAME_WE)
     foreach (backend ${SPPC_TEST_BACKENDS})
@@ -125,6 +159,15 @@ if (SPPC_BUILD_TESTS)
       # them away.
       target_compile_options(
         ${name} PRIVATE $<IF:$<C_COMPILER_ID:MSVC>,/UNDEBUG,-UNDEBUG>)
+
+      # Some tests count with C11 "_Atomic", which msvc's C compiler
+      # takes only behind this switch (VS 2022 17.5 and later). The
+      # library itself uses none.
+      if (MSVC)
+        target_compile_options(${name} PRIVATE /experimental:c11atomics)
+        target_compile_options(${name} PRIVATE /Z7)
+        target_link_options(${name} PRIVATE /DEBUG)
+      endif ()
       add_test(
         NAME ${name} COMMAND ${name})
 
