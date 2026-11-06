@@ -1,10 +1,15 @@
 #pragma once
 
-/// The POSIX implementation of the public api, shared by every platform that
-/// has one (Linux and Darwin). A function that differs between them by a line
-/// or two has an "#if" here; one that differs throughout is defined whole in
-/// that platform's own file instead (platform/linux.h, platform/darwin.h), so
-/// every platform exports the same set of functions.
+/// The POSIX implementation of the public api, shared by Linux, Darwin and
+/// FreeBSD, in the order its parts need each other: the system headers and
+/// the pthread calls sppc needs beyond POSIX, then the async runtime and the
+/// crash reporter that stand on them, then the api, and last the parts every
+/// platform shares (platform/common.h). A function that differs between the
+/// platforms by a line or two has an "#if" here; one that differs throughout
+/// is defined whole in that platform's own file instead (platform/linux.h,
+/// platform/darwin.h, platform/freebsd.h), and this one skips it with an
+/// "#if", so every platform exports the same set of functions. Each
+/// platform's file includes this one.
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -14,9 +19,7 @@
 #include <sppc/macros.h>
 #include <sppc/closure.h>
 #include <sppc/types.h>
-#include <sppc/async.h>
-#include <sppc/backtrace.h>
-#include <sppc/platform/errno.h>
+#include <sppc/errors.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -28,6 +31,7 @@
 #if SPPC_KERNEL_FREEBSD
   #include <pthread_np.h>
 #endif
+#include <sched.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -50,34 +54,165 @@
 #include <malloc.h>
 #endif
 
+// ==================== PTHREADS ====================
+
+// The pthread calls sppc needs beyond POSIX: waits against a chosen clock,
+// spin locks, a once that fits in a handle, and try-locks that say EBUSY for
+// a lock this thread already holds. glibc has them all; musl lacks the
+// clock-based waits, FreeBSD them and a once that fits, and Darwin has none,
+// so they are built from what each does have: here where two platforms share
+// the way, in platform/darwin.h (ahead of this file) for Darwin's own. Each
+// takes the glibc call's arguments and returns as it does (0 or an error
+// number), under an "_sppc_" name, so nothing claims a pthread name a later
+// SDK might declare itself. The async runtime, included after this, takes
+// its locks through them.
+
+#ifndef _SPPC_BACKOFF_MIN_NS // platform/darwin.h's, if it came first
+// The pause between two tries of a lock or once built from tries: from
+// 50 us, doubling up to 1 ms, and never past a deadline.
+#define _SPPC_BACKOFF_MIN_NS 50000L
+#define _SPPC_BACKOFF_MAX_NS 1000000L
+#endif
+
+#if SPPC_KERNEL_LINUX || SPPC_KERNEL_FREEBSD
+
+typedef pthread_spinlock_t _sppc_spinlock_t;
+#define _sppc_pthread_rwlock_tryrdlock pthread_rwlock_tryrdlock
+#define _sppc_pthread_rwlock_trywrlock pthread_rwlock_trywrlock
+#define _sppc_pthread_spin_init pthread_spin_init
+#define _sppc_pthread_spin_lock pthread_spin_lock
+#define _sppc_pthread_spin_trylock pthread_spin_trylock
+#define _sppc_pthread_spin_unlock pthread_spin_unlock
+#define _sppc_pthread_spin_destroy pthread_spin_destroy
+
+#endif
+
+#if SPPC_KERNEL_LINUX
+
+typedef pthread_once_t _sppc_once_t;
+#define _SPPC_ONCE_INIT PTHREAD_ONCE_INIT
+#define _sppc_pthread_once pthread_once
+
+#endif
+
+#if defined(__GLIBC__)
+
+#define _sppc_pthread_mutex_clocklock pthread_mutex_clocklock
+#define _sppc_pthread_rwlock_clockrdlock pthread_rwlock_clockrdlock
+#define _sppc_pthread_rwlock_clockwrlock pthread_rwlock_clockwrlock
+#define _sppc_pthread_cond_clockwait pthread_cond_clockwait
+
+#elif SPPC_KERNEL_LINUX || SPPC_KERNEL_FREEBSD
+
+// musl and FreeBSD have only the POSIX timed waits, against CLOCK_REALTIME
+// (the clock a condition variable made with no attributes waits on). A
+// deadline on any other clock becomes the real-time instant as far off as it
+// is: a step of the real-time clock during the wait moves it, as glibc's
+// calls would not.
+
+/// @p deadline on @p clock as a real-time deadline, into @p out. EINVAL for
+/// a clock that cannot be read.
+_gnu_inline _gnu_nonnull(2, 3)
+int _sppc_realtime_deadline(
+  const clockid_t clock, struct timespec const *deadline,
+  struct timespec *out) {
+  if (clock == CLOCK_REALTIME) {
+    *out = *deadline;
+    return 0;
+  }
+  struct timespec now, real;
+  if (clock_gettime(clock, &now) != 0 || clock_gettime(CLOCK_REALTIME, &real) != 0) { return EINVAL; }
+  out->tv_sec = real.tv_sec + (deadline->tv_sec - now.tv_sec);
+  out->tv_nsec = real.tv_nsec + (deadline->tv_nsec - now.tv_nsec);
+  while (out->tv_nsec < 0) {
+    out->tv_nsec += 1000000000L;
+    out->tv_sec -= 1;
+  }
+  while (out->tv_nsec >= 1000000000L) {
+    out->tv_nsec -= 1000000000L;
+    out->tv_sec += 1;
+  }
+  return 0;
+}
+
+_gnu_inline _gnu_nonnull(1, 3)
+int _sppc_pthread_mutex_clocklock(
+  pthread_mutex_t *mutex, const clockid_t clock,
+  struct timespec const *deadline) {
+  struct timespec real;
+  const int err = _sppc_realtime_deadline(clock, deadline, &real);
+  return err != 0 ? err : pthread_mutex_timedlock(mutex, &real);
+}
+
+_gnu_inline _gnu_nonnull(1, 3)
+int _sppc_pthread_rwlock_clockrdlock(
+  pthread_rwlock_t *rwlock, const clockid_t clock,
+  struct timespec const *deadline) {
+  struct timespec real;
+  const int err = _sppc_realtime_deadline(clock, deadline, &real);
+  return err != 0 ? err : pthread_rwlock_timedrdlock(rwlock, &real);
+}
+
+_gnu_inline _gnu_nonnull(1, 3)
+int _sppc_pthread_rwlock_clockwrlock(
+  pthread_rwlock_t *rwlock, const clockid_t clock,
+  struct timespec const *deadline) {
+  struct timespec real;
+  const int err = _sppc_realtime_deadline(clock, deadline, &real);
+  return err != 0 ? err : pthread_rwlock_timedwrlock(rwlock, &real);
+}
+
+_gnu_inline _gnu_nonnull(1, 2, 4)
+int _sppc_pthread_cond_clockwait(
+  pthread_cond_t *cond, pthread_mutex_t *mutex,
+  const clockid_t clock, struct timespec const *deadline) {
+  struct timespec real;
+  const int err = _sppc_realtime_deadline(clock, deadline, &real);
+  return err != 0 ? err : pthread_cond_timedwait(cond, mutex, &real);
+}
+
+#endif
+
+#if SPPC_KERNEL_DARWIN || SPPC_KERNEL_FREEBSD
+
+/// Darwin's and FreeBSD's "pthread_once_t" is 16 bytes, too big for the
+/// handle it has to live in, so once is built on an int: not run, running,
+/// or done. The thread that moves it from not run to running calls the
+/// function; any other waits it out with the backoff's pauses, as a once is
+/// run once and seldom raced for.
+typedef int _sppc_once_t;
+#define _SPPC_ONCE_INIT 0
+#define _SPPC_ONCE_RUNNING 1
+#define _SPPC_ONCE_DONE 2
+
+_gnu_inline_va _gnu_nonnull(1, 2)
+int _sppc_pthread_once(_sppc_once_t *once, void (*fn)(void)) {
+  int state = _SPPC_ONCE_INIT;
+  if (__atomic_compare_exchange_n(once, &state, _SPPC_ONCE_RUNNING, false, __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE)) {
+    fn();
+    __atomic_store_n(once, _SPPC_ONCE_DONE, __ATOMIC_RELEASE);
+    return 0;
+  }
+  for (long pause = _SPPC_BACKOFF_MIN_NS; __atomic_load_n(once, __ATOMIC_ACQUIRE) != _SPPC_ONCE_DONE;) {
+    const struct timespec nap = {0, pause};
+    nanosleep(&nap, NULL);
+    if (pause < _SPPC_BACKOFF_MAX_NS) { pause *= 2; }
+  }
+  return 0;
+}
+
+#endif
+
+// ==================== RUNTIME ====================
+
+// The async runtime and the crash reporter, over the pthreads above; the api
+// below takes its blocking calls and locks through them.
+#include <sppc/async.h>
+#include <sppc/backtrace.h>
+
 extern pthread_mutex_t _stdin_mutex;
 extern pthread_mutex_t _stdout_mutex;
 extern pthread_mutex_t _stderr_mutex;
-
-// Initialise a mutex of the given type (normal, error-checking, recursive).
-_gnu_inline
-int pthread_mutex_init_helper(pthread_mutex_t *target, const int flag) {
-  pthread_mutexattr_t attr;
-  pthread_mutexattr_init(&attr);
-  pthread_mutexattr_settype(&attr, flag);
-  const int err = pthread_mutex_init(target, &attr);
-  pthread_mutexattr_destroy(&attr);
-  return err;
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)
-char* strrstr(const char *_sppc_restrict haystack, const char *_sppc_restrict needle) {
-  if (*needle == '\0') { return (char*)haystack + strlen(haystack); }
-  char *last = (char*)NULL;
-  char const *p = haystack;
-
-  while ((p = strstr(p, needle)) != NULL) {
-    last = (char*)p;
-    p++;
-  }
-
-  return last;
-}
 
 // "MAP_STACK" is a hint only Linux and the BSDs take.
 #if defined(MAP_STACK)
@@ -86,9 +221,8 @@ char* strrstr(const char *_sppc_restrict haystack, const char *_sppc_restrict ne
   #define _SPPC_MAP_STACK 0
 #endif
 
-/// "getenv", except in a setuid/setgid process, which trusts
-/// nothing in its environment and sees none of it. glibc has
-/// this as "secure_getenv".
+/// "getenv", except in a setuid/setgid process, which trusts nothing in its
+/// environment and sees none of it. glibc has this as "secure_getenv".
 _gnu_inline _gnu_nonnull(1)
 char* _sppc_secure_getenv(char const *name) {
 #if defined(__GLIBC__)
@@ -129,85 +263,43 @@ ssize_t _sppc_send_by_copy(const int to_fd, const int from_fd, const off_t start
   return write(to_fd, buf, (size_t)got);
 }
 
+/// "copy_file_range" from each file's position: a read and a
+/// write, each moving its position as the real call does. Darwin
+/// has no "copy_file_range"; Linux and FreeBSD fall back to this
+/// where theirs refuses the two files. A
+/// write that falls short puts the read position back by what
+/// was not written, so nothing read is lost.
+_gnu_inline
+ssize_t _sppc_copy_range(const int fd_in, const int fd_out, const size_t len) {
+  char buf[_SPPC_COPY_CHUNK];
+  if (len == 0) { return 0; }
+  const ssize_t got = read(fd_in, buf, len < sizeof buf ? len : sizeof buf);
+  if (got <= 0) { return got; }
+  ssize_t done = 0;
+  while (done < got) {
+    const ssize_t w = write(fd_out, buf + done, (size_t)(got - done));
+    if (w < 0) {
+      if (errno == EINTR) { continue; }
+      break;
+    }
+    done += w;
+  }
+  if (done < got) {
+    const int err = errno;
+    lseek(fd_in, (off_t)(done - got), SEEK_CUR);
+    if (done == 0) {
+      errno = err;
+      return -1;
+    }
+  }
+  return done;
+}
+
 // ==================== TRANSLATION ====================
 
-// The public api speaks sppc's types and constants (sppc/types.h); these turn
-// them into the platform's and back. A family of constants whose values every
-// POSIX system shares passes straight through, with the claim checked at
-// compile time; any other goes through a small table of {sppc, platform}
-// pairs, so nothing assumes a value - not even on Linux, where the numbers are
-// mostly the same but O_DIRECT, O_DIRECTORY and friends differ between x86_64
-// and arm64. A value the platform has no equivalent for is refused rather than
-// guessed at, and one coming back that sppc has no name for is dropped.
-
-typedef struct {
-  int sppc;
-  int os;
-} _sppc_pair;
-
-#define _SPPC_PAIR(name) {SPPC_##name, name}
-#define _SPPC_COUNT(table) (sizeof (table) / sizeof *(table))
-
-/// One value of a set (a clock, a command, ...) to the platform's.
-_gnu_inline _gnu_nonnull(2, 4)
-int _sppc_to_os_value(const int value, _sppc_pair const *table, const size_t n, int *_sppc_restrict out) {
-  for (size_t i = 0; i < n; ++i) {
-    if (table[i].sppc == value) {
-      *out = table[i].os;
-      return 0;
-    }
-  }
-  return SPPC_EINVAL;
-}
-
-/// One of the platform's values back to sppc's, or "fallback" if it has none.
-_gnu_inline _gnu_nonnull(2)
-int _sppc_from_os_value(const int value, _sppc_pair const *table, const size_t n, const int fallback) {
-  for (size_t i = 0; i < n; ++i) {
-    if (table[i].os == value) { return table[i].sppc; }
-  }
-  return fallback;
-}
-
-/// Flags to the platform's. A flag made of several bits (O_SYNC includes
-/// O_DSYNC's) is listed before the flags it contains, so it is taken whole;
-/// a bit no entry claims is refused.
-_gnu_inline _gnu_nonnull(2, 4)
-int _sppc_to_os_flags(int flags, _sppc_pair const *table, const size_t n, int *_sppc_restrict out) {
-  int os = 0;
-  for (size_t i = 0; i < n && flags != 0; ++i) {
-    if (table[i].sppc != 0 && (flags & table[i].sppc) == table[i].sppc) {
-      os |= table[i].os;
-      flags &= ~table[i].sppc;
-    }
-  }
-  if (flags != 0) { return SPPC_EINVAL; }
-  *out = os;
-  return 0;
-}
-
-/// The platform's flags back to sppc's, dropping any sppc has no name for.
-_gnu_inline _gnu_nonnull(2)
-int _sppc_from_os_flags(int flags, _sppc_pair const *table, const size_t n) {
-  int out = 0;
-  for (size_t i = 0; i < n && flags != 0; ++i) {
-    if (table[i].os != 0 && (flags & table[i].os) == table[i].os) {
-      out |= table[i].sppc;
-      flags &= ~table[i].os;
-    }
-  }
-  return out;
-}
-
-/// Whether a table maps every value to itself, so a whole array of them can be
-/// handed to the platform untouched.
-_gnu_inline _gnu_nonnull(1)
-bool _sppc_table_is_identity(_sppc_pair const *table, const size_t n) {
-  for (size_t i = 0; i < n; ++i) {
-    if (table[i].sppc != table[i].os) { return false; }
-  }
-  return true;
-}
+// The machinery, and the tables every platform shares (sockets, poll), are
+// platform/shared.h's; what follows is the POSIX platforms' own.
+#include <sppc/platform/shared.h>
 
 // ---------- values every POSIX system shares ----------
 
@@ -231,7 +323,6 @@ _Static_assert(SPPC_FD_CLOEXEC == FD_CLOEXEC, "sppc: FD_CLOEXEC differs on this 
 
 #define _SPPC_MODE_PERMISSIONS 07777
 #define _SPPC_ACCESS_MODES (SPPC_R_OK | SPPC_W_OK | SPPC_X_OK)
-#define _SPPC_PROT_ALL (SPPC_PROT_READ | SPPC_PROT_WRITE | SPPC_PROT_EXEC)
 
 // ---------- files ----------
 
@@ -385,16 +476,6 @@ _Static_assert(sizeof(sppc_iovec) == sizeof(struct iovec) && offsetof(struct iov
 _Static_assert(sizeof(sppc_fd_set) == sizeof(fd_set) && FD_SETSIZE == 1024, "sppc: fd_set differs");
 
 /// "sppc_poll" events, both ways.
-_gnu_inline
-_sppc_pair const* _sppc_poll_table(size_t *_sppc_restrict n) {
-  static const _sppc_pair table[] = {
-    _SPPC_PAIR(POLLIN), _SPPC_PAIR(POLLPRI), _SPPC_PAIR(POLLOUT), _SPPC_PAIR(POLLERR), _SPPC_PAIR(POLLHUP),
-    _SPPC_PAIR(POLLNVAL), _SPPC_PAIR(POLLRDNORM), _SPPC_PAIR(POLLRDBAND), _SPPC_PAIR(POLLWRNORM),
-    _SPPC_PAIR(POLLWRBAND),
-  };
-  *n = _SPPC_COUNT(table);
-  return table;
-}
 
 // ---------- memory ----------
 
@@ -423,134 +504,6 @@ int _sppc_to_os_madvise(const int advice, int *_sppc_restrict out) {
 #endif
   };
   return _sppc_to_os_value(advice, table, _SPPC_COUNT(table), out);
-}
-
-// ---------- sockets ----------
-
-// Only ever handed to the platform as room for an address, with the
-// platform's own length, so it need only be as large and as aligned:
-// m68k's is 126 bytes, not 128.
-_Static_assert(sizeof(sppc_sockaddr_storage) >= sizeof(struct sockaddr_storage)
-  && _Alignof(sppc_sockaddr_storage) >= _Alignof(struct sockaddr_storage), "sppc: sockaddr_storage differs");
-
-/// The platform's view of an address only sppc ever reads or writes.
-#define _sppc_os_sockaddr(storage) ((struct sockaddr_storage*)(storage))
-#define _sppc_os_sockaddr_const(storage) ((struct sockaddr_storage const*)(storage))
-
-/// How much of a storage the address in it occupies, by its family.
-_gnu_inline _gnu_nonnull(1)
-socklen_t _sppc_sockaddr_len(struct sockaddr_storage const *storage) {
-  return storage->ss_family == AF_INET ? (socklen_t)sizeof(struct sockaddr_in) : (socklen_t)sizeof(struct sockaddr_in6);
-}
-
-_gnu_inline
-_sppc_pair const* _sppc_af_table(size_t *_sppc_restrict n) {
-  static const _sppc_pair table[] = {_SPPC_PAIR(AF_UNSPEC), _SPPC_PAIR(AF_UNIX), _SPPC_PAIR(AF_INET), _SPPC_PAIR(AF_INET6)};
-  *n = _SPPC_COUNT(table);
-  return table;
-}
-
-_gnu_inline
-_sppc_pair const* _sppc_sock_types_table(size_t *_sppc_restrict n) {
-  static const _sppc_pair table[] = {
-    _SPPC_PAIR(SOCK_STREAM), _SPPC_PAIR(SOCK_DGRAM), _SPPC_PAIR(SOCK_RAW), _SPPC_PAIR(SOCK_SEQPACKET),
-  };
-  *n = _SPPC_COUNT(table);
-  return table;
-}
-
-// Darwin's "socket" and "socketpair" take neither flag. Two bits no socket
-// type uses stand in for them, and "_sppc_os_socket" applies them with
-// "fcntl" once the socket exists.
-#if defined(SOCK_NONBLOCK)
-  #define _SPPC_OS_SOCK_NONBLOCK SOCK_NONBLOCK
-  #define _SPPC_OS_SOCK_CLOEXEC SOCK_CLOEXEC
-  #define _SPPC_SOCK_FLAGS_BY_FCNTL 0
-#else
-  #define _SPPC_OS_SOCK_NONBLOCK 0x10000000
-  #define _SPPC_OS_SOCK_CLOEXEC 0x20000000
-  #define _SPPC_SOCK_FLAGS_BY_FCNTL 1
-#endif
-
-/// A socket type, with SOCK_NONBLOCK / SOCK_CLOEXEC or'd in.
-_gnu_inline _gnu_nonnull(2)
-int _sppc_to_os_sock_type(const int type, int *_sppc_restrict out) {
-  static const _sppc_pair flags[] = {
-    {SPPC_SOCK_NONBLOCK, _SPPC_OS_SOCK_NONBLOCK}, {SPPC_SOCK_CLOEXEC, _SPPC_OS_SOCK_CLOEXEC},
-  };
-  const int sppc_flags = type & (SPPC_SOCK_NONBLOCK | SPPC_SOCK_CLOEXEC);
-  size_t n;
-  _sppc_pair const *const types = _sppc_sock_types_table(&n);
-  int os_type, os_flags;
-  if (_sppc_to_os_value(type & ~sppc_flags, types, n, &os_type) != 0) { return SPPC_EINVAL; }
-  if (_sppc_to_os_flags(sppc_flags, flags, _SPPC_COUNT(flags), &os_flags) != 0) { return SPPC_EINVAL; }
-  *out = os_type | os_flags;
-  return 0;
-}
-
-_gnu_inline _gnu_nonnull(2)
-int _sppc_to_os_msg_flags(const int flags, int *_sppc_restrict out) {
-  static const _sppc_pair table[] = {
-    _SPPC_PAIR(MSG_OOB), _SPPC_PAIR(MSG_PEEK), _SPPC_PAIR(MSG_DONTROUTE), _SPPC_PAIR(MSG_TRUNC),
-    _SPPC_PAIR(MSG_DONTWAIT), _SPPC_PAIR(MSG_WAITALL),
-#ifdef MSG_NOSIGNAL
-    _SPPC_PAIR(MSG_NOSIGNAL),
-#endif
-  };
-  if (_sppc_likely(flags == 0)) {
-    *out = 0;
-    return 0;
-  }
-  return _sppc_to_os_flags(flags, table, _SPPC_COUNT(table), out);
-}
-
-/// A socket option: its level and name together, as a name only means
-/// something at its own level.
-_gnu_inline _gnu_nonnull(3, 4)
-int _sppc_to_os_sockopt(const int level, const int name, int *_sppc_restrict out_level, int *_sppc_restrict out_name) {
-  static const _sppc_pair socket[] = {
-    _SPPC_PAIR(SO_DEBUG), _SPPC_PAIR(SO_REUSEADDR), _SPPC_PAIR(SO_TYPE), _SPPC_PAIR(SO_ERROR),
-    _SPPC_PAIR(SO_DONTROUTE), _SPPC_PAIR(SO_BROADCAST), _SPPC_PAIR(SO_SNDBUF), _SPPC_PAIR(SO_RCVBUF),
-    _SPPC_PAIR(SO_KEEPALIVE), _SPPC_PAIR(SO_OOBINLINE), _SPPC_PAIR(SO_LINGER), _SPPC_PAIR(SO_REUSEPORT),
-    _SPPC_PAIR(SO_RCVLOWAT), _SPPC_PAIR(SO_SNDLOWAT), _SPPC_PAIR(SO_RCVTIMEO), _SPPC_PAIR(SO_SNDTIMEO),
-    _SPPC_PAIR(SO_ACCEPTCONN),
-  };
-  static const _sppc_pair tcp[] = {
-    _SPPC_PAIR(TCP_NODELAY), _SPPC_PAIR(TCP_MAXSEG),
-#ifdef TCP_KEEPIDLE
-    _SPPC_PAIR(TCP_KEEPIDLE),
-#elif defined(TCP_KEEPALIVE)
-    // Darwin's name for it: idle seconds before the first probe.
-    {SPPC_TCP_KEEPIDLE, TCP_KEEPALIVE},
-#endif
-#ifdef TCP_KEEPINTVL
-    _SPPC_PAIR(TCP_KEEPINTVL),
-#endif
-#ifdef TCP_KEEPCNT
-    _SPPC_PAIR(TCP_KEEPCNT),
-#endif
-  };
-  static const _sppc_pair ip[] = {
-    _SPPC_PAIR(IP_TOS), _SPPC_PAIR(IP_TTL), _SPPC_PAIR(IP_MULTICAST_TTL), _SPPC_PAIR(IP_MULTICAST_LOOP),
-  };
-  static const _sppc_pair ipv6[] = {
-    _SPPC_PAIR(IPV6_UNICAST_HOPS), _SPPC_PAIR(IPV6_MULTICAST_HOPS), _SPPC_PAIR(IPV6_MULTICAST_LOOP),
-    _SPPC_PAIR(IPV6_V6ONLY),
-  };
-
-  _sppc_pair const *table;
-  size_t n;
-  int os_level;
-  switch (level) {
-    case SPPC_SOL_SOCKET: table = socket; n = _SPPC_COUNT(socket); os_level = SOL_SOCKET; break;
-    case SPPC_IPPROTO_TCP: table = tcp; n = _SPPC_COUNT(tcp); os_level = IPPROTO_TCP; break;
-    case SPPC_IPPROTO_IP: table = ip; n = _SPPC_COUNT(ip); os_level = IPPROTO_IP; break;
-    case SPPC_IPPROTO_IPV6: table = ipv6; n = _SPPC_COUNT(ipv6); os_level = IPPROTO_IPV6; break;
-    default: return SPPC_ENOPROTOOPT;
-  }
-  if (_sppc_to_os_value(name, table, n, out_name) != 0) { return SPPC_ENOPROTOOPT; }
-  *out_level = os_level;
-  return 0;
 }
 
 // ---------- time ----------
@@ -764,306 +717,6 @@ _sppc_api int sppc_cleanup(void) {
   return 0;
 }
 
-// ==================== THREADING ====================
-
-_gnu_inline_va _gnu_nonnull(1)
-void* _sppc_thread_entry(void *closure) {
-  sppc_closure *const cl = (sppc_closure*)closure;
-  const sppc_closure call = *cl;
-  free(cl);
-
-  // Before the callable, not after: the prologue of the s++ code about to
-  // run reads this thread's unsafe stack pointer, and a thread that never
-  // set one up would read a null one. There is nowhere to report a failure
-  // to from here, and running on a null unsafe stack is not an option, so
-  // this is one of the few places the runtime gives up outright.
-  if (_unsafe_stack_wanted && sppc_unsafe_stack_up() != 0) { abort(); }
-  _sppc_bt_altstack_up();
-
-  call.fn(call.env);
-  free(call.env);
-
-  // As at process exit: a task spawned on this thread and never awaited still
-  // runs to completion, rather than being abandoned with the thread. The
-  // runtime's memory, ring and stacks are released afterwards by its own
-  // thread-exit hook.
-  _gt_drain();
-
-  // The thread is going away and its stack with it. Unlike the main
-  // thread's, this one is worth handing back: a process that spawns
-  // threads for its lifetime would otherwise accumulate one mapping each.
-  sppc_unsafe_stack_down();
-  _sppc_bt_altstack_down();
-  return NULL;
-}
-
-_gnu_inline _gnu_restrict_access(write_only, 2) _gnu_nonnull(2)
-_sppc_api int sppc_pthread_create(const sppc_closure start_routine, uint64_t *_sppc_restrict out) {
-  sppc_closure *const cl = (sppc_closure*)malloc(sizeof *cl);
-  if (cl == NULL) { _sppc_closure_discard(start_routine); return SPPC_ENOMEM; }
-  *cl = start_routine;
-  // Stored as a value, as every reader takes it: a pthread_t narrower than
-  // the handle, written through it, lands in the wrong half when big-endian.
-  pthread_t thread;
-  _extract_err(int) pthread_create(&thread, NULL, _sppc_thread_entry, cl);
-  if (err != 0) { free(cl); _sppc_closure_discard(start_routine); }
-  else { *out = (uint64_t)(uintptr_t)thread; }
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_join(uint64_t const *_sppc_restrict handle) {
-  // POSIX lets a join of the calling thread fail or hang; glibc fails it,
-  // musl hangs, so it is refused here.
-  if (pthread_equal((pthread_t)(uintptr_t)*handle, pthread_self())) { return SPPC_EDEADLK; }
-  _extract_err(int) pthread_join((pthread_t)(uintptr_t)*handle, NULL);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_detach(uint64_t const *_sppc_restrict handle) {
-  _extract_err(int) pthread_detach((pthread_t)(uintptr_t)*handle);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(write_only, 3)
-_sppc_api void sppc_pthread_equal(uint64_t const *handle1, uint64_t const *handle2, uint64_t *_sppc_restrict out) {
-  *out = pthread_equal((pthread_t)(uintptr_t)*handle1, (pthread_t)(uintptr_t)*handle2) != 0;
-}
-
-_gnu_inline _gnu_restrict_access(write_only, 1)
-_sppc_api void sppc_pthread_self(uint64_t *_sppc_restrict out) {
-  *out = (uint64_t)(uintptr_t)pthread_self();
-}
-
-_gnu_inline _gnu_restrict_access(write_only, 1)
-_sppc_api int sppc_pthread_mutex_init(uint64_t *_sppc_restrict out) {
-  _pthread_handle_alloc(pthread_mutex_t)
-  _extract_err(int) pthread_mutex_init_helper(obj, DEBUG_BUILD ? PTHREAD_MUTEX_ERRORCHECK : PTHREAD_MUTEX_NORMAL);
-  _pthread_handle_publish(out)
-}
-
-_gnu_inline _gnu_restrict_access(write_only, 1)
-_sppc_api int sppc_pthread_mutex_init_recursive(uint64_t *_sppc_restrict out) {
-  _pthread_handle_alloc(pthread_mutex_t)
-  _extract_err(int) pthread_mutex_init_helper(obj, PTHREAD_MUTEX_RECURSIVE);
-  _pthread_handle_publish(out)
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_mutex_lock(uint64_t const *_sppc_restrict mutex) {
-  _extract_err(int) _gt_mutex_lock(_pthread_handle(pthread_mutex_t, mutex));
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_mutex_trylock(uint64_t const *_sppc_restrict mutex) {
-  _extract_err(int) pthread_mutex_trylock(_pthread_handle(pthread_mutex_t, mutex));
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_mutex_unlock(uint64_t const *_sppc_restrict mutex) {
-  _extract_err(int) _gt_mutex_unlock(_pthread_handle(pthread_mutex_t, mutex));
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_mutex_destroy(uint64_t const *_sppc_restrict mutex) {
-  pthread_mutex_t *const obj = _pthread_handle(pthread_mutex_t, mutex);
-  _extract_err(int) pthread_mutex_destroy(obj);
-  free(obj);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(write_only, 1) _gnu_nonnull(1)
-// A once is an int, so unlike the mutex and friends it genuinely fits in the handle and lives there.
-_sppc_api int sppc_pthread_once_init(uint64_t *_sppc_restrict out) {
-  _Static_assert(sizeof(_sppc_once_t) <= sizeof(uint64_t), "a once must fit in its handle");
-  *out = 0; // clear the whole handle, not just the once-control inside it.
-  *(_sppc_once_t*)out = (_sppc_once_t)_SPPC_ONCE_INIT;
-  return 0;
-}
-
-extern _sppc_thread_local sppc_closure _sppc_once_closure;
-extern _sppc_thread_local int _sppc_once_ran;
-
-_gnu_inline_va
-void _sppc_once_entry(void) {
-  const sppc_closure call = _sppc_once_closure;
-  _sppc_once_ran = 1;
-  call.fn(call.env);
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_nonnull(1)
-_sppc_api int sppc_pthread_once(uint64_t const *_sppc_restrict once, const sppc_closure func) {
-  _sppc_once_closure = func;
-  _sppc_once_ran = 0;
-  _extract_err(int) _sppc_pthread_once((_sppc_once_t*)once, _sppc_once_entry);
-  if (_sppc_once_ran) { free(func.env); }
-  else { _sppc_closure_discard(func); }
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(write_only, 1)
-_sppc_api int sppc_pthread_cond_init(uint64_t *_sppc_restrict out) {
-  _pthread_handle_alloc(pthread_cond_t)
-  _extract_err(int) pthread_cond_init(obj, NULL);
-  _pthread_handle_publish(out)
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2)
-_sppc_api int sppc_pthread_cond_wait(uint64_t const *_sppc_restrict cond, uint64_t const *_sppc_restrict mutex) {
-  _extract_err(int) _gt_cond_wait_until(
-    _pthread_handle(pthread_cond_t, cond),
-    _pthread_handle(pthread_mutex_t, mutex),
-    CLOCK_MONOTONIC, NULL);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_cond_signal(uint64_t const *_sppc_restrict cond) {
-  _extract_err(int) pthread_cond_signal(_pthread_handle(pthread_cond_t, cond));
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_cond_broadcast(uint64_t const *_sppc_restrict cond) {
-  _extract_err(int) pthread_cond_broadcast(_pthread_handle(pthread_cond_t, cond));
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_cond_destroy(uint64_t const *_sppc_restrict cond) {
-  pthread_cond_t *const obj = _pthread_handle(pthread_cond_t, cond);
-  _extract_err(int) pthread_cond_destroy(obj);
-  free(obj);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(write_only, 1)
-_sppc_api int sppc_pthread_rwlock_init(uint64_t *_sppc_restrict rwlock) {
-  _pthread_handle_alloc(pthread_rwlock_t)
-  _extract_err(int) pthread_rwlock_init(obj, NULL);
-  _pthread_handle_publish(rwlock)
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_rwlock_rdlock(uint64_t const *_sppc_restrict rwlock) {
-  _extract_err(int) _gt_rwlock_rdlock_until(_pthread_handle(pthread_rwlock_t, rwlock), CLOCK_MONOTONIC, NULL);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_rwlock_tryrdlock(uint64_t const *_sppc_restrict rwlock) {
-  _extract_err(int) _sppc_pthread_rwlock_tryrdlock(_pthread_handle(pthread_rwlock_t, rwlock));
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_rwlock_wrlock(uint64_t const *_sppc_restrict rwlock) {
-  _extract_err(int) _gt_rwlock_wrlock_until(_pthread_handle(pthread_rwlock_t, rwlock), CLOCK_MONOTONIC, NULL);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_rwlock_trywrlock(uint64_t const *_sppc_restrict rwlock) {
-  _extract_err(int) _sppc_pthread_rwlock_trywrlock(_pthread_handle(pthread_rwlock_t, rwlock));
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_rwlock_unlock(uint64_t const *_sppc_restrict rwlock) {
-  _extract_err(int) _gt_rwlock_unlock(_pthread_handle(pthread_rwlock_t, rwlock));
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_rwlock_destroy(uint64_t const *_sppc_restrict rwlock) {
-  pthread_rwlock_t *const obj = _pthread_handle(pthread_rwlock_t, rwlock);
-  _extract_err(int) pthread_rwlock_destroy(obj);
-  free(obj);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 3)
-_sppc_api int sppc_pthread_mutex_clocklock(uint64_t const *_sppc_restrict mutex, const int clock,
-  sppc_timespec const *_sppc_restrict duration) {
-  clockid_t os_clock;
-  struct timespec os_duration, deadline;
-  if (_sppc_to_os_clock(clock, &os_clock) != 0 || _sppc_to_os_timespec(duration, &os_duration) != 0) { return SPPC_EINVAL; }
-  _gt_deadline(os_clock, &os_duration, &deadline);
-  _extract_err(int) _gt_mutex_lock_until(_pthread_handle(pthread_mutex_t, mutex), os_clock, &deadline);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(read_only, 4)
-_sppc_api int sppc_pthread_cond_clockwait(uint64_t const *_sppc_restrict cond, uint64_t const *_sppc_restrict mutex,
-  const int clock, sppc_timespec const *_sppc_restrict duration) {
-  clockid_t os_clock;
-  struct timespec os_duration, deadline;
-  if (_sppc_to_os_clock(clock, &os_clock) != 0 || _sppc_to_os_timespec(duration, &os_duration) != 0) { return SPPC_EINVAL; }
-  _gt_deadline(os_clock, &os_duration, &deadline);
-  _extract_err(int) _gt_cond_wait_until(
-    _pthread_handle(pthread_cond_t, cond),
-    _pthread_handle(pthread_mutex_t, mutex),
-    os_clock, &deadline);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 3)
-_sppc_api int sppc_pthread_rwlock_clockrdlock(uint64_t const *_sppc_restrict rwlock, const int clock,
-  sppc_timespec const *_sppc_restrict duration) {
-  clockid_t os_clock;
-  struct timespec os_duration, deadline;
-  if (_sppc_to_os_clock(clock, &os_clock) != 0 || _sppc_to_os_timespec(duration, &os_duration) != 0) { return SPPC_EINVAL; }
-  _gt_deadline(os_clock, &os_duration, &deadline);
-  _extract_err(int) _gt_rwlock_rdlock_until(_pthread_handle(pthread_rwlock_t, rwlock), os_clock, &deadline);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 3)
-_sppc_api int sppc_pthread_rwlock_clockwrlock(uint64_t const *_sppc_restrict rwlock, const int clock,
-  sppc_timespec const *_sppc_restrict duration) {
-  clockid_t os_clock;
-  struct timespec os_duration, deadline;
-  if (_sppc_to_os_clock(clock, &os_clock) != 0 || _sppc_to_os_timespec(duration, &os_duration) != 0) { return SPPC_EINVAL; }
-  _gt_deadline(os_clock, &os_duration, &deadline);
-  _extract_err(int) _gt_rwlock_wrlock_until(_pthread_handle(pthread_rwlock_t, rwlock), os_clock, &deadline);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(write_only, 1)
-// As for "once": a spin lock is an int, so it lives in the handle rather than behind it.
-_sppc_api int sppc_pthread_spin_init(uint64_t *_sppc_restrict spinlock) {
-  _extract_err(int) _sppc_pthread_spin_init((_sppc_spinlock_t*)spinlock, 0);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_spin_lock(uint64_t const *_sppc_restrict spinlock) {
-  _extract_err(int) _gt_spin_lock((_sppc_spinlock_t*)spinlock);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_spin_trylock(uint64_t const *_sppc_restrict spinlock) {
-  _extract_err(int) _sppc_pthread_spin_trylock((_sppc_spinlock_t*)spinlock);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_spin_unlock(uint64_t const *_sppc_restrict spinlock) {
-  _extract_err(int) _gt_spin_unlock((_sppc_spinlock_t*)spinlock);
-  _return_normalized_pthread_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1)
-_sppc_api int sppc_pthread_spin_destroy(uint64_t const *_sppc_restrict spinlock) {
-  _extract_err(int) _sppc_pthread_spin_destroy((_sppc_spinlock_t*)spinlock);
-  _return_normalized_pthread_err
-}
-
 // ==================== HEAP ALLOCATION ====================
 
 _gnu_inline _gnu_hot _gnu_malloc _gnu_alloc_size(1)
@@ -1074,8 +727,23 @@ _sppc_api void* sppc_malloc(const size_t size) {
 
 _gnu_inline _gnu_malloc _gnu_alloc_size(1) _gnu_alloc_align(2)
 _sppc_api void* sppc_aligned_alloc(const size_t size, const size_t alignment) {
-  _extract_err(void*) aligned_alloc(alignment, size);
-  _return_pointer
+  // The same answer from every C library, and Windows': any power of two is
+  // an alignment, anything else EINVAL (musl takes 0); one below a pointer's
+  // size is met by a pointer's, which "posix_memalign" asks for at least; and
+  // the size need not be a multiple of it (C11's "aligned_alloc" may refuse
+  // one that is not, as macOS's does). "posix_memalign" returns its error
+  // rather than setting errno, so it is set here.
+  if (alignment == 0 || (alignment & (alignment - 1)) != 0) {
+    errno = EINVAL;
+    return NULL;
+  }
+  void *out = NULL;
+  const int err = posix_memalign(&out, alignment < sizeof(void*) ? sizeof(void*) : alignment, size);
+  if (_sppc_unlikely(err != 0)) {
+    errno = err;
+    return NULL;
+  }
+  return out;
 }
 
 _gnu_inline _gnu_hot _gnu_malloc _gnu_alloc_size(1, 2)
@@ -1086,6 +754,13 @@ _sppc_api void* sppc_calloc(const size_t num, const size_t size) {
 
 _gnu_inline _gnu_hot _gnu_alloc_size(2)
 _sppc_api void* sppc_realloc(void *ptr, const size_t new_size) {
+  // A size of 0 frees the block and gives NULL, from every C library and
+  // Windows: glibc's answer, where musl's and macOS's keep a block of their
+  // own. Of NULL it is a fresh block, as everywhere.
+  if (new_size == 0 && ptr != NULL) {
+    free(ptr);
+    return NULL;
+  }
   _extract_err(void*) realloc(ptr, new_size);
   _return_pointer
 }
@@ -1095,44 +770,11 @@ _sppc_api void sppc_free(void *ptr) {
   free(ptr);
 }
 
-_gnu_inline _gnu_hot _gnu_restrict_access(write_only, 1) _gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)
-_sppc_api int sppc_memcpy(void *_sppc_restrict dest, void const *_sppc_restrict src, const size_t size, const size_t dest_index,
-  const size_t src_index) {
-  memcpy((char*)dest + dest_index, (char const*)src + src_index, size);
-  return 0;
-}
-
-// The regions may overlap - that is what separates this from memcpy - so neither
-// pointer is "restrict": with it the compiler may assume they don't, and turns the
-// call into a memcpy.
-_gnu_inline _gnu_hot _gnu_restrict_access(write_only, 1) _gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)
-_sppc_api int sppc_memmove(void *dest, void const *src, const size_t size) {
-  memmove(dest, src, size);
-  return 0;
-}
-
-_gnu_inline _gnu_hot _gnu_restrict_access(write_only, 1) _gnu_nonnull(1)
-_sppc_api int sppc_memset(void *_sppc_restrict dest, const int value, const size_t size, const size_t dest_index) {
-  memset((char*)dest + dest_index, value, size);
-  return 0;
-}
-
-_gnu_inline _gnu_hot _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2)
-_gnu_restrict_access(write_only, 4) _gnu_nonnull(1, 2, 4)
-_sppc_api int sppc_memcmp(void const *ptr1, void const *ptr2, const size_t size, int *_sppc_restrict out) {
-  _extract_err(int) memcmp(ptr1, ptr2, size);
-  _sret_sign_store(out)
-  return 0; // memcmp cannot fail; a negative result is an ordering, not an error.
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 3) _gnu_restrict_access(write_only, 5)
-_gnu_nonnull(1, 3, 5)
-_sppc_api int sppc_memmem(void const *haystack, const size_t haystack_size, void const *needle,
-  const size_t needle_size, size_t *_sppc_restrict out) {
-  _extract_err(void*) memmem(haystack, haystack_size, needle, needle_size);
-  if (err != NULL) { *out = (size_t)((char*)err - (char*)haystack); }
-  _return_found
-}
+// The mem* and str* helpers are every platform's (platform/common.h); these
+// are the calls they use that are not the same everywhere.
+#define _sppc_memmem memmem
+#define _sppc_strcasecmp strcasecmp
+#define _sppc_strcasestr strcasestr
 
 // ==================== SYSCALLS ====================
 
@@ -1282,11 +924,38 @@ _sppc_api int sppc_lseek(const int fd, const int64_t offset, const int whence, i
 _posix_syscall(9)
 _gnu_inline _gnu_malloc _gnu_alloc_size(2) // no fd_arg: MAP_ANONYMOUS passes -1
 _sppc_api void* sppc_mmap(const int fd, const size_t length, const int prot, const int flags, const int64_t offset) {
+  // FreeBSD maps memory neither shared nor private (as private), and an offset
+  // off a page boundary (rounded down, the pointer moved up to it), which POSIX
+  // and Linux refuse.
   int os_flags;
-  if ((prot & ~_SPPC_PROT_ALL) != 0 || _sppc_to_os_map_flags(flags, &os_flags) != 0) { return NULL; }
+  const int sharing = flags & (SPPC_MAP_SHARED | SPPC_MAP_PRIVATE);
+  if ((prot & ~_SPPC_PROT_ALL) != 0 || _sppc_to_os_map_flags(flags, &os_flags) != 0
+    || (sharing != SPPC_MAP_SHARED && sharing != SPPC_MAP_PRIVATE)
+    || offset < 0 || (uint64_t)offset % (uint64_t)sysconf(_SC_PAGESIZE) != 0) { return NULL; }
   _extract_err(void*) mmap(NULL, length, prot, os_flags, fd, (off_t)offset);
   _return_map_pointer
 }
+
+#if SPPC_KERNEL_FREEBSD
+/// SPPC_ENOMEM if any page in [addr, addr + size) is unmapped, else 0.
+/// FreeBSD's "mincore" refuses a range that starts outside a mapping or has
+/// a gap in it, and changes nothing; it is asked a stack buffer at a time.
+_gnu_inline
+int _sppc_freebsd_unmapped(void *const addr, const size_t size) {
+  char vec[1024];
+  const uintptr_t page = (uintptr_t)sysconf(_SC_PAGESIZE);
+  const uintptr_t chunk = sizeof vec * page;
+  const uintptr_t start = (uintptr_t)addr;
+  if (size > UINTPTR_MAX - start) { return SPPC_ENOMEM; }
+  const uintptr_t end = start + size;
+  for (uintptr_t at = start; at < end; at += chunk) {
+    const size_t n = end - at < chunk ? end - at : chunk;
+    if (mincore((void*)at, n, vec) != 0) { return _sppc_errno(errno); }
+    if (n < chunk) { break; }
+  }
+  return 0;
+}
+#endif
 
 _posix_syscall(10)
 _gnu_inline _gnu_nonnull(1)
@@ -1296,6 +965,12 @@ _sppc_api int sppc_memprotect(void *addr, const size_t size, const int prot) {
   if ((prot & ~_SPPC_PROT_ALL) != 0 || (uintptr_t)addr % (uintptr_t)sysconf(_SC_PAGESIZE) != 0) {
     return SPPC_EINVAL;
   }
+#if SPPC_KERNEL_FREEBSD
+  // FreeBSD's "mprotect" changes what is mapped in the range and passes over
+  // what is not; POSIX and Linux refuse a range with unmapped pages in it.
+  const int unmapped = _sppc_freebsd_unmapped(addr, size);
+  if (unmapped != 0) { return unmapped; }
+#endif
   _extract_err(int) mprotect(addr, size, prot);
   _return_normalized_err
 }
@@ -1411,8 +1086,10 @@ _sppc_api void sppc_sched_yield(void) {
 _posix_syscall(26)
 _gnu_inline _gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)
 _sppc_api int sppc_msync(void *_sppc_restrict addr, size_t const *_sppc_restrict length, const int flags) {
+  // FreeBSD's MS_SYNC is 0, so it takes both together as MS_ASYNC alone.
   int os_flags;
-  if (_sppc_to_os_msync_flags(flags, &os_flags) != 0) { return SPPC_EINVAL; }
+  if (_sppc_to_os_msync_flags(flags, &os_flags) != 0
+    || (flags & (SPPC_MS_SYNC | SPPC_MS_ASYNC)) == (SPPC_MS_SYNC | SPPC_MS_ASYNC)) { return SPPC_EINVAL; }
   _extract_err(int) msync(addr, *length, os_flags);
   _return_normalized_err
 }
@@ -1584,13 +1261,6 @@ _sppc_api int sppc_getpeername(const int fd, sppc_sockaddr_storage *_sppc_restri
   socklen_t len = (socklen_t)sizeof(struct sockaddr_storage);
   _extract_err(int) getpeername(fd, (struct sockaddr*)_sppc_os_sockaddr(out_storage), &len);
   _return_normalized_err
-}
-
-_posix_syscall(60)
-_gnu_inline _gnu_noreturn _gnu_cold
-_sppc_api void sppc_exit(const int status) {
-  sppc_cleanup();
-  exit(status);
 }
 
 _posix_syscall(62)
@@ -1850,13 +1520,6 @@ _sppc_api int sppc_realpath(char const *_sppc_restrict path, char *_sppc_restric
   _return_normalized_ptr_err
 }
 
-/// Whether a template ends in the six X's the name is made from. glibc
-/// insists on them; Darwin takes fewer, even none, and makes the path as is.
-_gnu_inline _gnu_nonnull(1)
-bool _sppc_is_temp_template(char const *path) {
-  const size_t len = strlen(path);
-  return len >= 6 && memcmp(path + len - 6, "XXXXXX", 6) == 0;
-}
 
 _gnu_inline _gnu_restrict_access(read_write, 1) _gnu_restrict_access(write_only, 2) _gnu_nonnull(1, 2)
 _sppc_api int sppc_mktemp(char *_sppc_restrict path, int *_sppc_restrict out_fd) {
@@ -1879,86 +1542,6 @@ _sppc_api int sppc_statvfs(char const *_sppc_restrict path, struct sppc_statvfs 
   _extract_err(int) statvfs(path, &st);
   if (err == 0) { _sppc_from_os_statvfs(&st, out); }
   _return_normalized_err
-}
-
-_gnu_inline _gnu_restrict_access(write_only, 1) _gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)
-_sppc_api int sppc_strcpy(char *_sppc_restrict dest, char const *_sppc_restrict src) {
-  _extract_err(char*) strcpy(dest, src);
-  _return_normalized_ptr_err
-}
-
-_gnu_inline _gnu_restrict_access(read_write, 1) _gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)
-_sppc_api int sppc_strcat(char *_sppc_restrict dest, char const *_sppc_restrict src) {
-  _extract_err(char*) strcat(dest, src);
-  _return_normalized_ptr_err
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(write_only, 3)
-_gnu_nonnull(1, 2, 3)
-_sppc_api int sppc_strcmp(char const *str1, char const *str2, bool *_sppc_restrict out) {
-  _extract_err(int) strcmp(str1, str2);
-  *out = err == 0 ? true : false;
-  return 0; // an ordering result, not an error.
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(write_only, 3)
-_gnu_nonnull(1, 2, 3)
-_sppc_api int sppc_strcasecmp(char const *str1, char const *str2, bool *_sppc_restrict out) {
-  _extract_err(int) strcasecmp(str1, str2);
-  *out = err == 0 ? true : false;
-  return 0; // an ordering result, not an error.
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 3) _gnu_nonnull(1, 3)
-_sppc_api int sppc_strchr(char const *str, const char ch, size_t *_sppc_restrict out_idx) {
-  _extract_err(char*) strchr(str, ch);
-  if (err != NULL) { *out_idx = (size_t)(err - str); }
-  _return_found
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 3) _gnu_nonnull(1, 3)
-_sppc_api int sppc_strrchr(char const *str, const char ch, size_t *_sppc_restrict out_idx) {
-  _extract_err(char*) strrchr(str, ch);
-  if (err != NULL) { *out_idx = (size_t)(err - str); }
-  _return_found
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(write_only, 3)
-_gnu_nonnull(1, 2, 3)
-_sppc_api int sppc_strstr(char const *haystack, char const *needle, size_t *_sppc_restrict out_idx) {
-  _extract_err(char*) strstr(haystack, needle);
-  if (err != NULL) { *out_idx = (size_t)(err - haystack); }
-  _return_found
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(write_only, 3)
-_gnu_nonnull(1, 2, 3)
-_sppc_api int sppc_strrstr(char const *haystack, char const *needle, size_t *_sppc_restrict out_idx) {
-  _extract_err(char*) strrstr(haystack, needle);
-  if (err != NULL) { *out_idx = (size_t)(err - haystack); }
-  _return_found
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(write_only, 3)
-_gnu_nonnull(1, 2, 3)
-_sppc_api int sppc_strcasestr(char const *haystack, char const *needle, size_t *_sppc_restrict out_idx) {
-  _extract_err(char*) strcasestr(haystack, needle);
-  if (err != NULL) { *out_idx = (size_t)(err - haystack); }
-  _return_found
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_restrict_access(write_only, 3)
-_gnu_nonnull(1, 2, 3)
-_sppc_api int sppc_strpbrk(char const *string, char const *accept, size_t *_sppc_restrict out_idx) {
-  _extract_err(char*) strpbrk(string, accept);
-  if (err != NULL) { *out_idx = (size_t)(err - string); }
-  _return_found
-}
-
-_gnu_inline _gnu_malloc _gnu_restrict_access(read_only, 1) _gnu_nonnull(1)
-_sppc_api void* sppc_strdup(char const *str) {
-  _extract_err(char*) strdup(str);
-  _return_pointer
 }
 
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2, 3) _gnu_nonnull(1, 2)
@@ -1991,170 +1574,7 @@ _sppc_api int sppc_unsetenv(char const *_sppc_restrict key) {
   _return_normalized_err
 }
 
-_gnu_inline _gnu_noreturn _gnu_cold
-_sppc_api void sppc_halt(const int status) {
-  _exit(status);
-}
-
-/// End the process now, through the same path as a failed runtime check
-/// ("sppc_check_failed"): a backtrace, then "_exit". Not libc's "abort",
-/// whose "SIGABRT" runs whatever handler is installed for it.
-_gnu_inline _gnu_noreturn _gnu_cold
-_sppc_api void sppc_abort(void) {
-  _sppc_bt_fail_begin();
-  _sppc_bt_put("\n[sppc] aborted\n");
-  _sppc_bt_fail_end(__builtin_return_address(0));
-}
-
-/// The runtime checks the compiler emits, each failing through
-/// "sppc_check_failed". The compiler mirrors these numbers (RuntimeCheck in
-/// llvm_fn_impls.cpp), so they are only ever added to.
-enum {
-  SPPC_CHECK_INDEX = 1, // a: the index, b: the length
-  SPPC_CHECK_CONVERSION = 2,
-  SPPC_CHECK_GENERATOR_SEND = 3,
-  SPPC_CHECK_SLICE_ORDER = 4, // a: the start, b: the end
-  SPPC_CHECK_SLICE_END = 5, // a: the end, b: the length
-  SPPC_CHECK_FLOAT_TO_INT = 6, // a: the integer's width, b: 1 if it is signed
-  SPPC_CHECK_FFI_UNWIND = 7, // a: the foreign function's name, a constant C string
-  SPPC_CHECK_SIGNED_ADD = 0x10,
-  SPPC_CHECK_UNSIGNED_ADD = 0x11,
-  SPPC_CHECK_SIGNED_SUB = 0x12,
-  SPPC_CHECK_UNSIGNED_SUB = 0x13,
-  SPPC_CHECK_SIGNED_MUL = 0x14,
-  SPPC_CHECK_UNSIGNED_MUL = 0x15,
-};
-
-/// The one path a failed runtime check ends the process through: a fixed
-/// message naming the check, with the values it was given, then a backtrace
-/// and "_exit". Nothing allocates, and no code of the program's runs again.
-_gnu_inline _gnu_noreturn _gnu_cold
-_sppc_api void sppc_check_failed(const uint32_t check, const uint64_t a, const uint64_t b) {
-  _sppc_bt_fail_begin();
-  _sppc_bt_put("\n[sppc] check failed: ");
-  switch (check) {
-    case SPPC_CHECK_INDEX:
-      _sppc_bt_put("index ");
-      _sppc_bt_put_dec(a);
-      _sppc_bt_put(" out of bounds for length ");
-      _sppc_bt_put_dec(b);
-      break;
-    case SPPC_CHECK_CONVERSION:
-      _sppc_bt_put("integer conversion reached for a width pair it is not defined for");
-      break;
-    case SPPC_CHECK_GENERATOR_SEND:
-      _sppc_bt_put("generator 'send' was reached directly; it is lowered through the '.res()' operator");
-      break;
-    case SPPC_CHECK_SLICE_ORDER:
-      _sppc_bt_put("slice ");
-      _sppc_bt_put_dec(a);
-      _sppc_bt_put("..");
-      _sppc_bt_put_dec(b);
-      _sppc_bt_put(" ends before it starts");
-      break;
-    case SPPC_CHECK_SLICE_END:
-      _sppc_bt_put("slice end ");
-      _sppc_bt_put_dec(a);
-      _sppc_bt_put(" out of bounds for length ");
-      _sppc_bt_put_dec(b);
-      break;
-    case SPPC_CHECK_FLOAT_TO_INT:
-      _sppc_bt_put("float out of range for ");
-      _sppc_bt_put(b != 0 ? "S" : "U");
-      _sppc_bt_put_dec(a);
-      _sppc_bt_put(", or NaN");
-      break;
-    case SPPC_CHECK_FFI_UNWIND:
-      _sppc_bt_put("an exception unwound into s++ from '");
-      _sppc_bt_put((char const*)(uintptr_t)a);
-      _sppc_bt_put("'; foreign code must not unwind through s++ frames");
-      break;
-    case SPPC_CHECK_SIGNED_ADD: _sppc_bt_put("signed add overflowed");
-      break;
-    case SPPC_CHECK_UNSIGNED_ADD: _sppc_bt_put("unsigned add overflowed");
-      break;
-    case SPPC_CHECK_SIGNED_SUB: _sppc_bt_put("signed subtract overflowed");
-      break;
-    case SPPC_CHECK_UNSIGNED_SUB: _sppc_bt_put("unsigned subtract underflowed");
-      break;
-    case SPPC_CHECK_SIGNED_MUL: _sppc_bt_put("signed multiply overflowed");
-      break;
-    case SPPC_CHECK_UNSIGNED_MUL: _sppc_bt_put("unsigned multiply overflowed");
-      break;
-    default:
-      _sppc_bt_put("unknown check ");
-      _sppc_bt_put_dec(check);
-      break;
-  }
-  _sppc_bt_put("\n");
-  _sppc_bt_fail_end(__builtin_return_address(0));
-}
-
 // ==================== SAFE SOCKETS ====================
-
-/// A port between host and network byte order, either way. Not "htons" /
-/// "ntohs": Darwin defines those through a static function, which an inline
-/// one with external linkage may not call (C17 6.7.4p3).
-_gnu_inline
-uint16_t _sppc_net16(const uint16_t v) {
-#if SPPC_ENDIAN_BIG
-  return v;
-#else
-  return (uint16_t)(v << 8 | v >> 8);
-#endif
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 3) _gnu_nonnull(1, 3)
-_sppc_api void sppc_set_sockaddr_v4(uint8_t const *octets, const uint16_t port,
-  sppc_sockaddr_storage *_sppc_restrict out_storage) {
-  struct sockaddr_in *const addr = (struct sockaddr_in*)_sppc_os_sockaddr(out_storage);
-  addr->sin_family = AF_INET;
-  addr->sin_port = _sppc_net16(port);
-  memset(&addr->sin_zero, 0, sizeof(addr->sin_zero));
-  memcpy(&addr->sin_addr.s_addr, octets, 4);
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 3) _gnu_nonnull(1, 3)
-_sppc_api void sppc_set_sockaddr_v6(uint16_t const *segments, const uint16_t port,
-  sppc_sockaddr_storage *_sppc_restrict out_storage) {
-  struct sockaddr_in6 *const addr = (struct sockaddr_in6*)_sppc_os_sockaddr(out_storage);
-  addr->sin6_family = AF_INET6;
-  addr->sin6_port = _sppc_net16(port);
-  addr->sin6_flowinfo = 0;
-  addr->sin6_scope_id = 0;
-  // Segments arrive in host order, as the port does, and go out big-endian.
-  for (size_t i = 0; i < 8; ++i) {
-    addr->sin6_addr.s6_addr[2 * i] = (uint8_t)(segments[i] >> 8);
-    addr->sin6_addr.s6_addr[2 * i + 1] = (uint8_t)(segments[i] & 0xff);
-  }
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2) _gnu_restrict_access(write_only, 3)
-_gnu_nonnull(1, 2, 3)
-_sppc_api void sppc_get_sockaddr_v4(sppc_sockaddr_storage const *_sppc_restrict storage, uint8_t *out_octets,
-  uint16_t *out_port) {
-  struct sockaddr_in const *const addr = (struct sockaddr_in const*)_sppc_os_sockaddr_const(storage);
-  memcpy(out_octets, &addr->sin_addr.s_addr, 4);
-  *out_port = _sppc_net16(addr->sin_port);
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2) _gnu_restrict_access(write_only, 3)
-_gnu_nonnull(1, 2, 3)
-_sppc_api void sppc_get_sockaddr_v6(sppc_sockaddr_storage const *_sppc_restrict storage, uint16_t *out_segments,
-  uint16_t *out_port) {
-  struct sockaddr_in6 const *const addr = (struct sockaddr_in6 const*)_sppc_os_sockaddr_const(storage);
-  for (size_t i = 0; i < 8; ++i) {
-    out_segments[i] = (uint16_t)(addr->sin6_addr.s6_addr[2 * i] << 8 | addr->sin6_addr.s6_addr[2 * i + 1]);
-  }
-  *out_port = _sppc_net16(addr->sin6_port);
-}
-
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2) _gnu_nonnull(1, 2)
-_sppc_api void sppc_sockaddr_family(sppc_sockaddr_storage const *_sppc_restrict storage, int *_sppc_restrict out_family) {
-  size_t n;
-  _sppc_pair const *const families = _sppc_af_table(&n);
-  *out_family = _sppc_from_os_value(_sppc_os_sockaddr_const(storage)->ss_family, families, n, SPPC_AF_UNSPEC);
-}
 
 _gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(read_only, 4) _gnu_nonnull(4)
 _sppc_api int sppc_setsockopt(const int fd, const int level, const int optname, int const *_sppc_restrict optval) {
@@ -2228,30 +1648,113 @@ _sppc_api int sppc_getsockopt_linger(const int fd, const int level, const int op
   _return_normalized_err
 }
 
-// ==================== SPECIALISED SYSCALLS ====================
+// ==================== LINUX AND FREEBSD ====================
 
-_gnu_inline _gnu_restrict_access(write_only, 1) _gnu_restrict_access(write_only, 4) _gnu_nonnull(1, 4)
-_sppc_api int sppc_stdin_read(char *_sppc_restrict buffer, const size_t size, const size_t count, ssize_t *_sppc_restrict out_n) {
-  ssize_t err = 0;
-  _return_if_guarded_err(&_stdin_mutex, sppc_read(buffer, size, count, STDIN_FILENO, &err))
-  _sret_normalised_store(out_n)
+// The calls beyond POSIX that Linux and FreeBSD both have: "pipe2",
+// "accept4", "fdatasync", "clock_nanosleep", "getrandom" and
+// "copy_file_range". Darwin builds the same functions in platform/darwin.h.
+
+#if !SPPC_KERNEL_DARWIN
+
+#include <sys/random.h>
+
+// ---------- syscalls ----------
+
+_posix_syscall(22)
+_gnu_inline _gnu_restrict_access(write_only, 1) _gnu_restrict_access(write_only, 2) _gnu_nonnull(1, 2)
+_sppc_api int sppc_pipe(int *_sppc_restrict out_read_fd, int *_sppc_restrict out_write_fd) {
+  int fds[2];
+  _extract_err(int) pipe2(fds, O_CLOEXEC);
+  if (err == 0) {
+    *out_read_fd = fds[0];
+    *out_write_fd = fds[1];
+  }
   _return_normalized_err
 }
 
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 4) _gnu_nonnull(1, 4)
-_sppc_api int sppc_stdout_write(char const *_sppc_restrict buffer, const size_t size, const size_t count,
+_posix_syscall(43)
+_gnu_inline _gnu_fd_arg(1) _gnu_restrict_access(write_only, 2) _gnu_restrict_access(write_only, 3) _gnu_nonnull(2, 3)
+_sppc_api int sppc_accept(const int fd, sppc_sockaddr_storage *_sppc_restrict out_storage, int *_sppc_restrict out_fd) {
+  struct sockaddr *const addr = (struct sockaddr*)_sppc_os_sockaddr(out_storage);
+  socklen_t len = (socklen_t)sizeof(struct sockaddr_storage);
+  _extract_err_async(int, _gt_try_accept(fd, addr, &len, &_async_res), accept4(fd, addr, &len, SOCK_CLOEXEC))
+  _sret_normalised_store(out_fd)
+  _return_normalized_err
+}
+
+_posix_syscall(75)
+_gnu_inline _gnu_fd_arg(1)
+_sppc_api int sppc_fdatasync(const int fd) {
+  _extract_err(int) fdatasync(fd);
+  _return_normalized_err
+}
+
+// "clock_nanosleep" returns its error rather than setting errno, unlike every
+// other call routed through "_extract_err_async"; this gives it their shape.
+_gnu_inline _gnu_nonnull(3)
+int _sppc_clock_nanosleep_errno(const clockid_t clock, const int flags, struct timespec const *duration) {
+  const int e = clock_nanosleep(clock, flags, duration, NULL);
+  if (e != 0) {
+    errno = e;
+    return -1;
+  }
+  return 0;
+}
+
+_posix_syscall(230)
+_gnu_inline _gnu_restrict_access(read_only, 3) _gnu_nonnull(3)
+_sppc_api int sppc_clock_nanosleep(const int clock, const int flags, sppc_timespec const *_sppc_restrict duration) {
+  clockid_t os_clock;
+  int os_flags;
+  struct timespec ts;
+  if (_sppc_to_os_clock(clock, &os_clock) != 0 || _sppc_to_os_timer_flags(flags, &os_flags) != 0 ||
+    _sppc_to_os_timespec(duration, &ts) != 0) {
+    return SPPC_EINVAL;
+  }
+  _extract_err_async(int, _gt_try_sleep(os_clock, os_flags, &ts, &_async_res),
+    _sppc_clock_nanosleep_errno(os_clock, os_flags, &ts))
+  _return_normalized_err
+}
+
+_posix_syscall(318)
+_gnu_inline _gnu_restrict_access(write_only, 2) _gnu_nonnull(2)
+_sppc_api int sppc_getrandom(const size_t size, char *_sppc_restrict out) {
+  size_t filled = 0;
+  while (filled < size) {
+    const ssize_t n = getrandom(out + filled, size - filled, 0);
+    if (n < 0) {
+      if (errno == EINTR) { continue; }
+      return _sppc_errno(errno);
+    }
+    filled += (size_t)n;
+  }
+  return 0;
+}
+
+// ---------- stdlib ----------
+
+_gnu_inline _gnu_fd_arg_read(1) _gnu_fd_arg_write(2) _gnu_restrict_access(write_only, 5) _gnu_nonnull(5)
+_sppc_api int sppc_copyfile(const int fd_in, const int fd_out, const size_t len, const int flags,
   ssize_t *_sppc_restrict out_n) {
-  ssize_t err = 0;
-  _return_if_guarded_err(&_stdout_mutex, sppc_write(buffer, size, count, STDOUT_FILENO, &err))
+  // No flags are defined yet; the argument keeps room for them.
+  if (flags != 0) {
+    *out_n = -1;
+    return SPPC_EINVAL;
+  }
+  // A partial copy is normal, so the count has to reach the caller. Where the kernel refuses to copy between the two
+  // files (across filesystems before Linux 5.3 and again for some from 5.19, a kernel without the call, a filesystem
+  // that does not support it), the same copy is made by reading and writing.
+  ssize_t copied = copy_file_range(fd_in, NULL, fd_out, NULL, len, 0);
+  if (copied < 0 && (errno == EXDEV || errno == ENOSYS || errno == EOPNOTSUPP)) {
+    copied = _sppc_copy_range(fd_in, fd_out, len);
+  }
+  _extract_err(ssize_t) copied;
   _sret_normalised_store(out_n)
   _return_normalized_err
 }
 
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 4) _gnu_nonnull(1, 4)
-_sppc_api int sppc_stderr_write(char const *_sppc_restrict buffer, const size_t size, const size_t count,
-  ssize_t *_sppc_restrict out_n) {
-  ssize_t err = 0;
-  _return_if_guarded_err(&_stderr_mutex, sppc_write(buffer, size, count, STDERR_FILENO, &err))
-  _sret_normalised_store(out_n)
-  _return_normalized_err
-}
+#endif
+
+// ==================== EVERY PLATFORM'S ====================
+
+#include <sppc/platform/common.h>

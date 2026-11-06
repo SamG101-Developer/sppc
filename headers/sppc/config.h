@@ -37,6 +37,14 @@
   #error "SPPC: Unsupported platform"
 #endif
 
+// The oldest Windows sppc runs on: 10. Set before any system header
+// is read, as they declare only what the version they are told has;
+// "WaitOnAddress" and "GetSystemTimePreciseAsFileTime" (8 and up) are
+// what the threads are built on.
+#if SPPC_PLATFORM_WINDOWS && !defined(_WIN32_WINNT)
+  #define _WIN32_WINNT 0x0A00
+#endif
+
 // Platforms that share a kernel share everything that is the
 // kernel's: io_uring, the Linux syscalls and the ELF loader
 // for Linux and Android; kqueue, Mach-O and the Darwin libc

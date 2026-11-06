@@ -12,7 +12,7 @@ static void yielding(void *e) {
   *v->out += v->v;
 }
 static sppc_closure mk(void (*fn)(void*), long *out, long v) {
-  env_t *e = malloc(sizeof *e);
+  env_t *e = sppc_malloc(sizeof *e);
   e->out = out; e->v = v;
   return (sppc_closure){fn, e};
 }

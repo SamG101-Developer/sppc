@@ -3,12 +3,104 @@
 /// Switching between tasks. The switch itself is assembly (asm/gt_switch.S),
 /// one per calling convention; this lays out a new task's stack so that the
 /// first switch into it looks exactly like a resume.
+///
+/// Windows switches with fibers instead: they keep the thread's stack bounds
+/// in its TIB, its SEH chain and the registers its abi preserves (xmm6-15
+/// among them) right, which a hand-written switch would each have to, and
+/// need no assembly from three compilers that spell it differently. A task's
+/// "stack" and "sp" are then both its fiber.
 
 #include <sppc/config.h>
 #include <sppc/async/runtime.h>
+#include <sppc/async/vmem.h>
 #include <string.h>
 
+#if SPPC_PLATFORM_WINDOWS
+
+// The fiber's whole life, defined with the scheduler (async/sched.h).
+inline void WINAPI _gt_fiber_main(LPVOID unused);
+
+/// Resume the task whose fiber "load" holds. Nothing is saved: a fiber's
+/// handle stays the same however often it is left and resumed.
+_gnu_inline _gnu_hot _gnu_nonnull(2)
+void _gt_context_switch(void **save, void *const *load) {
+  (void)save;
+  SwitchToFiber(*load);
+}
+
+/// A fiber for a new task, of "size" bytes of reserved stack: a finished
+/// task's, if one of that size is kept, else a new one. Its first switch
+/// runs "_gt_fiber_main", and a reused one carries on in it, so either way
+/// the new task is run as the runtime's current one. FIBER_FLAG_FLOAT_SWITCH
+/// keeps each task's floating-point control state its own, as the assembly
+/// switches do.
+_gnu_inline
+void* _gt_task_stack_alloc(const size_t size) {
+  if (_gt_R.fibers_cached && _gt_R.fiber_cached_size == size) {
+    return _gt_R.fiber_cache[--_gt_R.fibers_cached];
+  }
+  return CreateFiberEx(0, size, FIBER_FLAG_FLOAT_SWITCH, _gt_fiber_main, NULL);
+}
+
+/// Delete a fiber, stack and all. Never the running one: that ends the thread.
+_gnu_inline _gnu_nonnull(1)
+void _gt_task_stack_unmap(void *fiber, const size_t size) {
+  (void)size;
+  DeleteFiber(fiber);
+}
+
+/// Keep a finished task's fiber for the next spawn, as the stack cache does.
+_gnu_inline
+void _gt_task_stack_free(void *fiber, const size_t size) {
+  if (fiber == NULL) { return; }
+  if (_gt_R.fibers_cached < GT_STACK_CACHE &&
+    (_gt_R.fibers_cached == 0 || _gt_R.fiber_cached_size == size)) {
+    _gt_R.fiber_cached_size = size;
+    _gt_R.fiber_cache[_gt_R.fibers_cached++] = fiber;
+    return;
+  }
+  _gt_task_stack_unmap(fiber, size);
+}
+
+/// Delete every kept fiber.
+_gnu_inline
+void _gt_task_stacks_flush(void) {
+  while (_gt_R.fibers_cached) { DeleteFiber(_gt_R.fiber_cache[--_gt_R.fibers_cached]); }
+}
+
+/// The running fiber. Out of line, as the one place that reads it: gcc
+/// takes mingw's "GetCurrentFiber" (a load from gs:0x20) for an access
+/// through a null pointer, and -Warray-bounds says so wherever it inlines.
+#if SPPC_CC_GCC
+  #pragma GCC diagnostic push
+  #pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
+_gnu_noinline _gnu_cold
+inline void* _gt_current_fiber(void) {
+  return GetCurrentFiber();
+}
+#if SPPC_CC_GCC
+  #pragma GCC diagnostic pop
+#endif
+
+/// The fiber is already where its first switch should land.
+_gnu_inline _gnu_nonnull(1, 3)
+void* _gt_stack_prime(void *fiber, const size_t size, void (*entry)(void)) {
+  (void)size;
+  (void)entry;
+  return fiber;
+}
+
+#else
+
 extern void _gt_switch(void **save_sp, void *const *load_sp);
+
+// A task's stack is one of the runtime's own (async/vmem.h).
+#define _gt_context_switch _gt_switch
+#define _gt_task_stack_alloc _gt_stack_alloc
+#define _gt_task_stack_free _gt_stack_free
+#define _gt_task_stack_unmap _gt_stack_unmap
+#define _gt_task_stacks_flush() ((void)0)
 
 /// Lay out the stack of the new task, in such a way that the
 /// first switch into it looks like a "resume" - the register
@@ -175,3 +267,5 @@ void* _gt_stack_prime(void *usable, const size_t size, void (*entry)(void)) {
 #  error "the green-thread runtime cannot lay out a stack for this architecture"
 #endif
 }
+
+#endif

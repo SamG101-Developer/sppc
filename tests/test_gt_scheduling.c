@@ -15,7 +15,7 @@ static void body(void *e) {
   sum_cell += v.id;
 }
 static sppc_closure mk(int id, int spins) {
-  env_t *e = malloc(sizeof *e); e->id = id; e->spins = spins;
+  env_t *e = sppc_malloc(sizeof *e); e->id = id; e->spins = spins;
   return (sppc_closure){body, e};
 }
 
@@ -47,7 +47,7 @@ int main(void) {
   assert(sppc_await(ha) == SPPC_EINVAL);   // retired handle is refused, not answered
 
   long deep_out = 0;
-  deep_env_t *de = malloc(sizeof *de); de->out = &deep_out;
+  deep_env_t *de = sppc_malloc(sizeof *de); de->out = &deep_out;
   int hd; assert(sppc_async(&hd, (sppc_closure){deep_body, de}) == 0);
   assert(sppc_await(hd) == 0);
   printf("deep=%ld (want 5050)\n", deep_out);
@@ -57,7 +57,7 @@ int main(void) {
   int slow; assert(sppc_async(&slow, mk(9, 4)) == 0);
   int flag = 0, j1, j2, j3;
   for (int i = 0; i < 3; ++i) {
-    join_env_t *je = malloc(sizeof *je); je->target = slow; je->flag = &flag;
+    join_env_t *je = sppc_malloc(sizeof *je); je->target = slow; je->flag = &flag;
     int *h = i == 0 ? &j1 : i == 1 ? &j2 : &j3;
     assert(sppc_async(h, (sppc_closure){join_body, je}) == 0);
   }

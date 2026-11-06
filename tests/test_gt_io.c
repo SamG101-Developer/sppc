@@ -76,8 +76,8 @@ int main(void) {
   int fds[2]; assert(pipe(fds) == 0);
   char buf[16] = {0}; ssize_t got = -1;
 
-  rd_t *re = malloc(sizeof *re); *re = (rd_t){fds[0], buf, &got};
-  wr_t *we = malloc(sizeof *we); *we = (wr_t){fds[1]};
+  rd_t *re = sppc_malloc(sizeof *re); *re = (rd_t){fds[0], buf, &got};
+  wr_t *we = sppc_malloc(sizeof *we); *we = (wr_t){fds[1]};
   int hr, hw;
   assert(sppc_async(&hr, (sppc_closure){reader, re}) == 0);
   assert(sppc_async(&hw, (sppc_closure){writer, we}) == 0);

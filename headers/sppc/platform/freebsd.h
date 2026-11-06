@@ -3,13 +3,12 @@
 /// The parts of the public api that FreeBSD implements with
 /// calls of its own, rather than the POSIX ones in
 /// platform/posix.h. It has nearly every call Linux uses
-/// (platform/linux_freebsd.h); "sendfile" is built on its own,
+/// (also platform/posix.h's); "sendfile" is built on its own,
 /// and process hardening has no switch for the running image.
 /// Linux and Darwin define the same functions in
 /// platform/linux.h and platform/darwin.h.
 
 #include <sppc/platform/posix.h>
-#include <sppc/platform/linux_freebsd.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/uio.h>

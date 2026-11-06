@@ -7,8 +7,10 @@
 /// concurrent - the starting point for a new platform's own backend.
 
 #include <sppc/async/sched.h>
-#include <sys/socket.h>
-#include <sys/types.h>
+#if !SPPC_PLATFORM_WINDOWS // Winsock's are in platform/windows.h, ahead of this
+  #include <sys/socket.h>
+  #include <sys/types.h>
+#endif
 
 _gnu_inline _gnu_cold
 void _gt_io_setup(void) {}

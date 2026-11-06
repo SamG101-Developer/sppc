@@ -5,7 +5,33 @@
 // common ways it fails. The directory is empty again at the end, which is
 // itself checked: anything a call left behind would stop its removal.
 
-static char dir[64];
+static char dir[256];
+
+// What each platform reports of a mode's permission bits. Windows keeps only
+// a read-only attribute, which sppc reports as Python's os.stat does: 0666 or
+// 0444 for a file, 0777 or 0555 for a directory, after the owner's write bit.
+#if SPPC_PLATFORM_WINDOWS
+  #define PERMS(want, is_dir) (((want) & 0200) ? ((is_dir) ? 0777u : 0666u) : ((is_dir) ? 0555u : 0444u))
+  #define SEP "\\"
+#else
+  #define PERMS(want, is_dir) ((uint32_t)(want))
+  #define SEP "/"
+#endif
+
+/// Whether a path sppc hands back is absolute: from the root on POSIX; a
+/// drive's root or a share on Windows.
+static bool is_absolute(char const *path) {
+#if SPPC_PLATFORM_WINDOWS
+  return (path[0] != '\0' && path[1] == ':' && path[2] == '\\') || (path[0] == '\\' && path[1] == '\\');
+#else
+  return path[0] == '/';
+#endif
+}
+
+/// Whether this process may make symbolic links: Windows lets only an
+/// elevated one, or any in Developer Mode. The checks of them are skipped
+/// where it may not.
+static bool symlinks = true;
 
 static void at(char *out, char const *name) {
   snprintf(out, 128, "%s/%s", dir, name);
@@ -72,7 +98,7 @@ static void check_read_write(void) {
 
   // The mode asked for, less the usual umask bits (0640 has none of them).
   struct sppc_stat st;
-  CHECK(sppc_fstat(fd, &st) == 0 && (st.mode & 0777) == 0640 && st.size == 13);
+  CHECK(sppc_fstat(fd, &st) == 0 && (st.mode & 0777) == PERMS(0640, false) && st.size == 13);
   CHECK(sppc_close(fd) == 0);
 
   // Errors.
@@ -113,11 +139,12 @@ static void check_open_flags(void) {
   CHECK(sppc_open(path, SPPC_O_RDONLY | SPPC_O_DIRECTORY, 0, &fd) == SPPC_ENOTDIR);
   CHECK(sppc_open(dir, SPPC_O_RDONLY | SPPC_O_DIRECTORY, 0, &fd) == 0);
   sppc_close(fd);
-  CHECK(sppc_symlink(path, link) == 0);
-  CHECK(sppc_open(link, SPPC_O_RDONLY | SPPC_O_NOFOLLOW, 0, &fd) == SPPC_ELOOP);
+  if (symlinks) {
+    CHECK(sppc_symlink(path, link) == 0);
+    CHECK(sppc_open(link, SPPC_O_RDONLY | SPPC_O_NOFOLLOW, 0, &fd) == SPPC_ELOOP);
+    CHECK(sppc_unlink(link) == 0);
+  }
   CHECK(sppc_open(dir, SPPC_O_WRONLY, 0, &fd) == SPPC_EISDIR);
-
-  CHECK(sppc_unlink(link) == 0);
   CHECK(sppc_unlink(path) == 0);
 }
 
@@ -190,6 +217,19 @@ static void check_copy(void) {
   CHECK(size_of(dst) == 14);
   CHECK(sppc_copyfile(in, out, 1, 1, &n) == SPPC_EINVAL && n == -1); // no flags defined yet
 
+#ifndef _WIN32
+  // The read and write a copy falls back to where "copy_file_range" refuses the two files (Darwin's only copy): from
+  // each descriptor's own offset, short at the end, 0 once there is nothing left.
+  int64_t at_pos = -1;
+  CHECK(sppc_lseek(in, 0, SPPC_SEEK_SET, &at_pos) == 0);
+  CHECK(sppc_ftruncate(out, 0) == 0);
+  CHECK(sppc_lseek(out, 0, SPPC_SEEK_SET, &at_pos) == 0);
+  CHECK(_sppc_copy_range(in, out, 7) == 7);
+  CHECK(_sppc_copy_range(in, out, 100) == 7);
+  CHECK(_sppc_copy_range(in, out, 100) == 0);
+  CHECK(size_of(dst) == 14);
+#endif
+
   // sendfile with an offset: from there, which it moves on, and not from the
   // descriptor's own offset (left at the end by the copy above).
   int64_t off = 5;
@@ -216,7 +256,7 @@ static void check_directories(void) {
 
   CHECK(sppc_mkdir(sub, 0700) == 0);
   struct sppc_stat st;
-  CHECK(sppc_stat(sub, &st) == 0 && (st.mode & SPPC_S_IFMT) == SPPC_S_IFDIR && (st.mode & 0777) == 0700);
+  CHECK(sppc_stat(sub, &st) == 0 && (st.mode & SPPC_S_IFMT) == SPPC_S_IFDIR && (st.mode & 0777) == PERMS(0700, true));
   CHECK(sppc_mkdir(sub, 0700) == SPPC_EEXIST);
   CHECK(sppc_mkdir(deep, 0700) == 0);
   CHECK(make_file(file, "x") == 0);
@@ -278,6 +318,13 @@ static void check_links(void) {
   CHECK(sppc_link(target, hard) == SPPC_EEXIST);
   CHECK(sppc_link(dir, dangling) == SPPC_EPERM); // not a directory
 
+  if (!symlinks) {
+    CHECK(sppc_unlink(hard) == 0);
+    CHECK(sppc_stat(target, &t) == 0 && t.nlink == 1);
+    CHECK(sppc_unlink(target) == 0);
+    return;
+  }
+
   // A symbolic link: stat follows it, lstat does not.
   CHECK(sppc_symlink("target", soft) == 0);
   struct sppc_stat s;
@@ -313,19 +360,19 @@ static void check_paths(void) {
 
   // realpath resolves "." and ".." (and the temporary directory itself, which
   // may sit behind a link).
-  CHECK(sppc_realpath(dir, real_dir) == 0 && real_dir[0] == '/');
+  CHECK(sppc_realpath(dir, real_dir) == 0 && is_absolute(real_dir));
   snprintf(twisted, sizeof twisted, "%s/./p/../p//file", dir);
   char want[4200];
-  snprintf(want, sizeof want, "%s/p/file", real_dir);
+  snprintf(want, sizeof want, "%s" SEP "p" SEP "file", real_dir);
   CHECK(sppc_realpath(twisted, buf) == 0 && strcmp(buf, want) == 0);
   snprintf(twisted, sizeof twisted, "%s/p/missing", dir);
   CHECK(sppc_realpath(twisted, buf) == SPPC_ENOENT);
 
   // chdir and getcwd agree.
   char old[4096];
-  CHECK(sppc_getcwd(old, sizeof old) == 0 && old[0] == '/');
+  CHECK(sppc_getcwd(old, sizeof old) == 0 && is_absolute(old));
   CHECK(sppc_chdir(sub) == 0);
-  snprintf(want, sizeof want, "%s/p", real_dir);
+  snprintf(want, sizeof want, "%s" SEP "p", real_dir);
   CHECK(sppc_getcwd(buf, sizeof buf) == 0 && strcmp(buf, want) == 0);
   CHECK(sppc_getcwd(buf, 2) == SPPC_ERANGE);
   CHECK(sppc_chdir("file") == SPPC_ENOTDIR);
@@ -342,7 +389,7 @@ static void check_ownership(void) {
   at(path, "own");
   at(link, "own-link");
   CHECK(make_file(path, "") == 0);
-  CHECK(sppc_symlink("own", link) == 0);
+  if (symlinks) { CHECK(sppc_symlink("own", link) == 0); }
 
   // Giving a file to its own owner and group is always allowed, and so is
   // leaving either alone (all bits set).
@@ -350,10 +397,11 @@ static void check_ownership(void) {
   CHECK(sppc_stat(path, &st) == 0);
   CHECK(sppc_chown(path, st.uid, st.gid) == 0);
   CHECK(sppc_chown(path, UINT32_MAX, UINT32_MAX) == 0);
-  CHECK(sppc_lchown(link, st.uid, st.gid) == 0);
+  if (symlinks) { CHECK(sppc_lchown(link, st.uid, st.gid) == 0); }
   CHECK(sppc_chown("/nonexistent/sppc", st.uid, st.gid) == SPPC_ENOENT);
 
-  CHECK(sppc_unlink(link) == 0 && sppc_unlink(path) == 0);
+  if (symlinks) { CHECK(sppc_unlink(link) == 0); }
+  CHECK(sppc_unlink(path) == 0);
 }
 
 static int ts_after(sppc_timespec a, sppc_timespec b) {
@@ -365,7 +413,7 @@ static void check_times(void) {
   at(path, "times");
   at(link, "times-link");
   CHECK(make_file(path, "") == 0);
-  CHECK(sppc_symlink("times", link) == 0);
+  if (symlinks) { CHECK(sppc_symlink("times", link) == 0); }
 
   struct sppc_stat before, after, link_before, link_after;
   CHECK(sppc_stat(path, &before) == 0);
@@ -374,16 +422,19 @@ static void check_times(void) {
   CHECK(sppc_stat(path, &after) == 0 && ts_after(after.mtim, before.mtim));
 
   // Through the link without following it: the link moves, its target does not.
-  CHECK(sppc_lstat(link, &link_before) == 0);
-  before = after;
-  sleep_ms(20);
-  CHECK(sppc_utimensat(link, SPPC_AT_SYMLINK_NOFOLLOW) == 0);
-  CHECK(sppc_lstat(link, &link_after) == 0 && ts_after(link_after.mtim, link_before.mtim));
-  CHECK(sppc_stat(path, &after) == 0 && after.mtim.sec == before.mtim.sec && after.mtim.nsec == before.mtim.nsec);
+  if (symlinks) {
+    CHECK(sppc_lstat(link, &link_before) == 0);
+    before = after;
+    sleep_ms(20);
+    CHECK(sppc_utimensat(link, SPPC_AT_SYMLINK_NOFOLLOW) == 0);
+    CHECK(sppc_lstat(link, &link_after) == 0 && ts_after(link_after.mtim, link_before.mtim));
+    CHECK(sppc_stat(path, &after) == 0 && after.mtim.sec == before.mtim.sec && after.mtim.nsec == before.mtim.nsec);
+    CHECK(sppc_unlink(link) == 0);
+  }
 
   CHECK(sppc_utimensat(path, 0x4000) == SPPC_EINVAL);
   CHECK(sppc_utimensat("/nonexistent/sppc", 0) == SPPC_ENOENT);
-  CHECK(sppc_unlink(link) == 0 && sppc_unlink(path) == 0);
+  CHECK(sppc_unlink(path) == 0);
 }
 
 static void check_access(void) {
@@ -403,7 +454,7 @@ static void check_temp(void) {
   snprintf(made, sizeof made, "%s/t_XXXXXX", dir);
   CHECK(sppc_mktemp_dir(made) == 0 && strstr(made, "XXXXXX") == NULL && strncmp(made, dir, strlen(dir)) == 0);
   struct sppc_stat st;
-  CHECK(sppc_stat(made, &st) == 0 && (st.mode & SPPC_S_IFMT) == SPPC_S_IFDIR && (st.mode & 0777) == 0700);
+  CHECK(sppc_stat(made, &st) == 0 && (st.mode & SPPC_S_IFMT) == SPPC_S_IFDIR && (st.mode & 0777) == PERMS(0700, true));
   CHECK(sppc_rmdir(made) == 0);
 
   char bad[] = "/tmp/sppc_no_template";
@@ -415,6 +466,16 @@ static void check_temp(void) {
 int main(void) {
   if (sppc_init() != 0) { return 1; }
   check_temp_dir(dir, sizeof dir, "fs");
+
+  // Only Windows refuses a symbolic link to an ordinary process.
+  char probe[300];
+  snprintf(probe, sizeof probe, "%s/probe", dir);
+  const int made = sppc_symlink("probe-target", probe);
+  if (made == 0) { sppc_unlink(probe); }
+  else if (SPPC_PLATFORM_WINDOWS && made == SPPC_EPERM) {
+    symlinks = false;
+    printf("no symbolic links here (not elevated, not in Developer Mode): their checks are skipped\n");
+  }
   check_read_write();
   check_open_flags();
   check_dup();

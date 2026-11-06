@@ -7,6 +7,7 @@
 /// returning 0).
 
 #include <sppc/async/sched.h>
+#include <fcntl.h>
 #include <linux/io_uring.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
@@ -240,9 +241,24 @@ int32_t _gt_io_wait(struct io_uring_sqe *sqe) {
   struct io_uring_sqe *const sqe_var = _gt_sqe();              \
   if (sqe_var == NULL) { return 0; }
 
+/// Whether a call on "fd" must not wait. A ring op waits for readiness even
+/// on an O_NONBLOCK fd (only the plain syscall reports EAGAIN), so such an fd
+/// takes the fallback: it returns at once, so the thread never blocks on it.
+_gnu_inline
+bool _gt_fd_nonblocking(const int fd) {
+  const int fl = fcntl(fd, F_GETFL);
+  return fl >= 0 && (fl & O_NONBLOCK) != 0;
+}
+
+/// "_gt_io_begin" for an op on an fd, which declines non-blocking fds.
+#define _gt_io_begin_fd(sqe_var, fd)           \
+  if (!_gt_io_ready() || _gt_fd_nonblocking(fd)) { return 0; } \
+  struct io_uring_sqe *const sqe_var = _gt_sqe();              \
+  if (sqe_var == NULL) { return 0; }
+
 _gnu_inline _gnu_hot _gnu_nonnull(4)
 int _gt_try_read(const int fd, void *buf, const size_t n, ssize_t *res) {
-  _gt_io_begin(sqe)
+  _gt_io_begin_fd(sqe, fd)
   sqe->opcode = IORING_OP_READ;
   sqe->fd = fd;
   sqe->addr = (uint64_t)(uintptr_t)buf;
@@ -253,7 +269,7 @@ int _gt_try_read(const int fd, void *buf, const size_t n, ssize_t *res) {
 
 _gnu_inline _gnu_hot _gnu_nonnull(4)
 int _gt_try_write(const int fd, void const *buf, const size_t n, ssize_t *res) {
-  _gt_io_begin(sqe)
+  _gt_io_begin_fd(sqe, fd)
   sqe->opcode = IORING_OP_WRITE;
   sqe->fd = fd;
   sqe->addr = (uint64_t)(uintptr_t)buf;
@@ -264,7 +280,8 @@ int _gt_try_write(const int fd, void const *buf, const size_t n, ssize_t *res) {
 
 _gnu_inline _gnu_hot _gnu_nonnull(5)
 int _gt_try_recv(const int fd, void *buf, const size_t n, const int flags, ssize_t *res) {
-  _gt_io_begin(sqe)
+  if ((flags & MSG_DONTWAIT) != 0) { return 0; }
+  _gt_io_begin_fd(sqe, fd)
   sqe->opcode = IORING_OP_RECV;
   sqe->fd = fd;
   sqe->addr = (uint64_t)(uintptr_t)buf;
@@ -275,7 +292,8 @@ int _gt_try_recv(const int fd, void *buf, const size_t n, const int flags, ssize
 
 _gnu_inline _gnu_hot _gnu_nonnull(5)
 int _gt_try_send(const int fd, void const *buf, const size_t n, const int flags, ssize_t *res) {
-  _gt_io_begin(sqe)
+  if ((flags & MSG_DONTWAIT) != 0) { return 0; }
+  _gt_io_begin_fd(sqe, fd)
   sqe->opcode = IORING_OP_SEND;
   sqe->fd = fd;
   sqe->addr = (uint64_t)(uintptr_t)buf;
@@ -286,7 +304,7 @@ int _gt_try_send(const int fd, void const *buf, const size_t n, const int flags,
 
 _gnu_inline _gnu_hot _gnu_nonnull(4)
 int _gt_try_accept(const int fd, struct sockaddr *addr, socklen_t *addrlen, int *res) {
-  _gt_io_begin(sqe)
+  _gt_io_begin_fd(sqe, fd)
   sqe->opcode = IORING_OP_ACCEPT;
   sqe->fd = fd;
   sqe->addr = (uint64_t)(uintptr_t)addr;
@@ -297,7 +315,7 @@ int _gt_try_accept(const int fd, struct sockaddr *addr, socklen_t *addrlen, int 
 
 _gnu_inline _gnu_hot _gnu_nonnull(2, 4)
 int _gt_try_connect(const int fd, struct sockaddr const *addr, const socklen_t addrlen, int *res) {
-  _gt_io_begin(sqe)
+  _gt_io_begin_fd(sqe, fd)
   sqe->opcode = IORING_OP_CONNECT;
   sqe->fd = fd;
   sqe->addr = (uint64_t)(uintptr_t)addr;

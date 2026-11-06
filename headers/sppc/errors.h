@@ -5,7 +5,9 @@
 /// number it is given; the preprocessor checks every one of them, and any
 /// that differs picks the table instead. powerpc differs in EDEADLOCK, mips
 /// and sparc in nearly every number, and Darwin and FreeBSD past 34 (EAGAIN
-/// is 35, not 11).
+/// is 35, not 11). Windows's C library agrees up to 34 and has numbers of its
+/// own past it (EDEADLK is 36, the network ones 100-140); its system calls'
+/// own two kinds of error are translated in platform/windows.h.
 
 #include <sppc/config.h>
 #include <sppc/macros.h>
@@ -13,8 +15,22 @@
 #include <errno.h>
 #include <stdint.h>
 
-#if !(SPPC_KERNEL_LINUX || SPPC_KERNEL_DARWIN || SPPC_KERNEL_FREEBSD)
+#if !(SPPC_KERNEL_LINUX || SPPC_KERNEL_DARWIN || SPPC_KERNEL_FREEBSD || SPPC_PLATFORM_WINDOWS)
 #error "sppc: no errno translation for this platform yet"
+#endif
+
+#if SPPC_PLATFORM_WINDOWS
+// The C library's first 34 are Linux's (bar the two it lacks, ENOTBLK and
+// ETXTBSY, which it numbers 139), so only the rest needs the table.
+_Static_assert(EPERM == SPPC_EPERM && ENOENT == SPPC_ENOENT && ESRCH == SPPC_ESRCH && EINTR == SPPC_EINTR
+  && EIO == SPPC_EIO && ENXIO == SPPC_ENXIO && E2BIG == SPPC_E2BIG && ENOEXEC == SPPC_ENOEXEC
+  && EBADF == SPPC_EBADF && ECHILD == SPPC_ECHILD && EAGAIN == SPPC_EAGAIN && ENOMEM == SPPC_ENOMEM
+  && EACCES == SPPC_EACCES && EFAULT == SPPC_EFAULT && EBUSY == SPPC_EBUSY && EEXIST == SPPC_EEXIST
+  && EXDEV == SPPC_EXDEV && ENODEV == SPPC_ENODEV && ENOTDIR == SPPC_ENOTDIR && EISDIR == SPPC_EISDIR
+  && EINVAL == SPPC_EINVAL && ENFILE == SPPC_ENFILE && EMFILE == SPPC_EMFILE && ENOTTY == SPPC_ENOTTY
+  && EFBIG == SPPC_EFBIG && ENOSPC == SPPC_ENOSPC && ESPIPE == SPPC_ESPIPE && EROFS == SPPC_EROFS
+  && EMLINK == SPPC_EMLINK && EPIPE == SPPC_EPIPE && EDOM == SPPC_EDOM && ERANGE == SPPC_ERANGE,
+  "the Windows C library's errno values 1-34 are Linux's");
 #endif
 
 #if EPERM == SPPC_EPERM \
