@@ -13,14 +13,19 @@ written out, commented, with the reason - so nothing goes missing silently.
 
 Requirements:
     pip install libclang        (or the distro's python3-clang)
+    a clang of the same major version, if libclang lacks its builtin headers
+    (pip's does; it is found automatically, or pass --clang)
     pip install pyperclip       (only for --copy)
 
 Usage:
     python tools/main.py HEADER [HEADER ...] [options] [-- CLANG_ARGS ...]
 
-    HEADER          the header(s) a user of the library would include. Only
+    HEADER          the header(s) a user of the library would include, or a
+                    folder standing for every .h directly in it. Only
                     declarations from files under --root are bound, so the
                     system headers they pull in are left out.
+
+The command is recorded at the top of the stub, to regenerate it with.
 
 Examples:
     # sppc: everything is reachable from sppc.h; its constants are the ones
@@ -28,6 +33,11 @@ Examples:
     python tools/main.py headers/sppc/sppc.h -I headers --prefix sppc_ \\
         --closure-type sppc_closure --constants --constants-root headers/sppc/types.h \\
         -o ../spp-stl/ffi/sppc/stub.spp
+
+    # A library split across several .so files (OpenSSL): one stub per .so,
+    # each from every header, keeping what that .so exports.
+    python tools/main.py /usr/local/ssl/include/openssl -I /usr/local/ssl/include \\
+        --library /usr/local/ssl/lib64/libssl.so.4 -o ffi/ssl/stub.spp
 
     # Any other library, cross-generating for windows.
     python tools/main.py /usr/include/zlib.h --root /usr/include/zlib.h \\
@@ -44,7 +54,8 @@ Type mapping (C -> S++, see std::cffi):
     struct foo / foo_t           CFoo (a "cls" is generated for it)
     union, bitfields, ...        CFoo, as an opaque blob of the right size/alignment
     --closure-type struct        CClosure[(Params,), Ret]
-    void* / char*                CVoidPtr / CCharPtr
+    void* / char* (param)        CMutBytePtr (any char: plain, signed, unsigned, uint8_t)
+    const void* / const char*    CRefBytePtr (param)
     T* / const T*                &mut T / &T
     T** (any nested pointer)     &mut CVoidPtr / &CVoidPtr
     pointer to incomplete type   CVoidPtr (an opaque handle)
@@ -53,10 +64,10 @@ Type mapping (C -> S++, see std::cffi):
     any pointer in a struct      CVoidPtr (S++ cannot store a borrow)
     T[N] in a struct             [T; N_uz]
     noreturn function            -> !
-    variadic function            fun f[..V](..., ..varargs: V)
 
-Not supported (the function is emitted commented out): long double, __int128,
-_Complex, vector types, flexible array members in by-value structs.
+Not supported (the function is emitted commented out): variadic functions (an
+ffi function cannot be generic; bind each prototype by hand), long double,
+__int128, _Complex, vector types, flexible array members in by-value structs.
 """
 
 from __future__ import annotations
@@ -64,6 +75,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -86,6 +98,9 @@ SPP_KEYWORDS = frozenset({
 
 SIGNED_BY_SIZE = {1: "CChar", 2: "CShort", 4: "CInt", 8: "CInt64"}
 UNSIGNED_BY_SIZE = {1: "CUChar", 2: "CUShort", 4: "CUInt", 8: "CUInt64"}
+# Pointees passed as a byte pointer (CRefBytePtr / CMutBytePtr): void and every char-sized type.
+BYTE_KINDS = {TK.VOID, TK.CHAR_S, TK.CHAR_U, TK.SCHAR, TK.UCHAR}
+
 SIGNED_KINDS = {TK.SCHAR, TK.SHORT, TK.INT, TK.LONG, TK.LONGLONG, TK.WCHAR}
 UNSIGNED_KINDS = {TK.UCHAR, TK.USHORT, TK.UINT, TK.ULONG, TK.ULONGLONG, TK.CHAR16, TK.CHAR32}
 
@@ -114,6 +129,7 @@ class Options:
     closure_types: set[str] = field(default_factory=set)
     constants: bool = False
     comments: bool = True
+    exports: Optional[set[str]] = None  # --library: only bind the functions it exports
 
 
 # ==================== NAMES ====================
@@ -129,6 +145,19 @@ def snake_to_pascal(name: str) -> str:
 
 def strip_leading_underscores(name: str) -> str:
     return name.lstrip("_")
+
+
+def lowercase_start(name: str) -> str:
+    """
+    S++ identifiers (functions, parameters, fields) start with a lowercase
+    letter: a name that doesn't (OPENSSL_init, M, CTX_new) is lowercased
+    whole, while one that does (camelCase) is left alone. Empty if no letter
+    can start it ("", "_new", "3des"), for the caller to choose a fallback.
+    """
+    name = name.lstrip("_")
+    if not name[:1].islower():
+        name = name.lower()
+    return name if name[:1].isalpha() else ""
 
 
 def common_field_prefix(names: list[str]) -> str:
@@ -154,8 +183,10 @@ class Generator:
         self._functions: list[str] = []
         self._constants: list[str] = []
         self._seen_symbols: set[str] = set()
+        self._spp_functions: dict[str, str] = {}  # S++ function name -> the C name first bound to it
         self._seen_constants: set[str] = set()
         self.warnings: list[str] = []
+        self.not_exported: set[str] = set()  # declared, but not in --library
 
     # ---------- filtering ----------
 
@@ -180,6 +211,11 @@ class Generator:
             prefix = ""
         return sanitize(c_name[len(prefix):])
 
+    def _spp_function_name(self, c_name: str) -> str:
+        """OPENSSL_init_ssl -> openssl_init_ssl, or init_ssl with --prefix OPENSSL_."""
+        # Stripping the prefix may leave "_new" or "3des": keep the full name then.
+        return sanitize(lowercase_start(self._spp_name(c_name)) or lowercase_start(c_name) or c_name.lower())
+
     # ---------- driving ----------
 
     def visit(self, tu: cl.TranslationUnit) -> None:
@@ -202,9 +238,10 @@ class Generator:
             else:
                 yield child
 
-    def render(self, sources: list[str]) -> str:
-        out = [f"# Generated by sppc/tools/main.py from {', '.join(sources)}.",
-               "# Regenerate rather than editing by hand.", ""]
+    def render(self, sources: list[str], command: str) -> str:
+        out = ["# Generated by sppc/tools/main.py from:"]
+        out += [f"# - {source}" for source in sources]
+        out += ["# Regenerate rather than editing by hand, with:", f"#   {command}", ""]
         out += [f"use std::cffi::{name}" for name in sorted(self._uses)]
         if self._constants:
             out += ["", "\n".join(self._constants)]
@@ -222,9 +259,16 @@ class Generator:
             return
         if self._matching_prefix(c_name) is None:
             return
+        if self._opts.exports is not None and c_name not in self._opts.exports:
+            self.not_exported.add(c_name)
+            return
         self._seen_symbols.add(c_name)
 
-        spp_name = self._spp_name(c_name)
+        spp_name = self._spp_function_name(c_name)
+        if spp_name in self._spp_functions:
+            self.warn(cursor, f"{c_name} and {self._spp_functions[spp_name]} are both bound as {spp_name}; "
+                              f"rename one by hand")
+        self._spp_functions.setdefault(spp_name, c_name)
         self._notes = []
         try:
             text = self._render_function(cursor, spp_name)
@@ -247,21 +291,21 @@ class Generator:
         params = []
         used_names: set[str] = set()
         for i, arg in enumerate(cursor.get_arguments()):
-            name = sanitize(strip_leading_underscores(arg.spelling)) or f"arg{i}"
+            name = sanitize(lowercase_start(arg.spelling) or f"arg{i}")
             if name in used_names:
                 name = f"{name}{i}"
             used_names.add(name)
             params.append(f"{name}: {self.map_type(arg.type, Pos.PARAM)}")
 
-        generics = ""
         if func_type.kind == TK.FUNCTIONPROTO and func_type.is_function_variadic():
-            params.append("..varargs: V")
-            generics = "[..V]"
-        elif func_type.kind == TK.FUNCTIONNOPROTO:
+            # A generic ffi function is an error (E101): C has one prototype, so
+            # bind each way it is called by hand (as sppc splits fcntl).
+            raise Unsupported("it is variadic; bind each prototype it is called with by hand")
+        if func_type.kind == TK.FUNCTIONNOPROTO:
             self._notes.append("declared without a prototype \"f()\"; parameters may be missing")
 
         return (f'!ffi(symbol="{cursor.spelling}")\n'
-                f"fun {spp_name}{generics}({', '.join(params)}) -> {ret} {{ }}")
+                f"fun {spp_name}({', '.join(params)}) -> {ret} {{ }}")
 
     def _is_noreturn(self, cursor: cl.Cursor) -> bool:
         # __attribute__((noreturn)) lives on the function type; C11's _Noreturn
@@ -407,13 +451,13 @@ class Generator:
         if pointee_canon.kind in (TK.FUNCTIONPROTO, TK.FUNCTIONNOPROTO):
             self._notes.append(f"'{t.spelling}' is a raw C function pointer, passed as CVoidPtr")
             return self.use("CVoidPtr")
-        if pointee_canon.kind == TK.VOID:
-            return self.use("CVoidPtr")
         # Anything that may be null or must outlive the call can't be a borrow.
         if pos in (Pos.RETURN, Pos.FIELD, Pos.POINTEE):
             return self.use("CVoidPtr")
-        if pointee_canon.kind in (TK.CHAR_S, TK.CHAR_U):
-            return self.use("CCharPtr")
+        # Bytes: a buffer S++ hands over for the call, from std::cffi::view_ptr_ref / view_ptr_mut. The pointee's
+        # constness says whether C may write through it, so a read-only view never yields a writable pointer.
+        if pointee_canon.kind in BYTE_KINDS:
+            return self.use("CRefBytePtr" if pointee.is_const_qualified() else "CMutBytePtr")
         # An opaque handle: nothing on the S++ side can know its layout.
         if pointee_canon.kind == TK.RECORD and pointee_canon.get_size() < 0:
             return self.use("CVoidPtr")
@@ -492,6 +536,7 @@ class Generator:
             names = [strip_leading_underscores(f.spelling) for f in c_fields]
             public = [n for f, n in zip(c_fields, names) if not f.spelling.startswith("_")]
             strip = common_field_prefix(public if len(public) >= 2 else names)
+            used_names: set[str] = set()
             for i, (f, name) in enumerate(zip(c_fields, names)):
                 if f.is_bitfield():
                     reason = f"field \"{f.spelling}\" is a bitfield"
@@ -506,7 +551,10 @@ class Generator:
                     break
                 private = f.spelling.startswith("_")
                 name = name[len(strip):] if name.startswith(strip) else name
-                name = sanitize(name or f"field{i}")
+                name = sanitize(lowercase_start(name) or f"field{i}")
+                if name in used_names:
+                    name = f"{name}{i}"
+                used_names.add(name)
                 fields.append(f"  !{'private' if private else 'public'} {name}: {spp_type}")
 
         if reason is not None:
@@ -573,20 +621,120 @@ def parse_integer_literal(tokens: list[str]) -> Optional[int]:
 
 # ==================== CLANG SETUP ====================
 
-def find_resource_include(clang_exe: Optional[str]) -> Optional[str]:
-    """
-    The pip "libclang" package doesn't ship the compiler's own headers
-    (stddef.h, stdarg.h, ...), so borrow them from an installed clang.
-    """
-    exe = clang_exe or shutil.which("clang")
-    if exe is None:
+def _major_version(version_text: str) -> Optional[int]:
+    m = re.search(r"clang version (\d+)\.", version_text)
+    return int(m.group(1)) if m else None
+
+
+def libclang_major_version() -> Optional[int]:
+    """The major version of the loaded libclang, e.g. 19."""
+    try:
+        get_version = cl.conf.lib.clang_getClangVersion
+        get_version.argtypes = []
+        get_version.restype = cl._CXString
+        get_version.errcheck = cl._CXString.from_result
+        return _major_version(get_version())
+    except (AttributeError, TypeError):
         return None
+
+
+def clang_major_version(exe: str) -> Optional[int]:
+    try:
+        out = subprocess.run([exe, "--version"], capture_output=True, text=True, check=True)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return _major_version(out.stdout)
+
+
+def libclang_has_builtin_headers() -> bool:
+    """Whether libclang finds its own stddef.h/stdint.h (distro packages ship them; pip's libclang doesn't)."""
+    probe = "sppc_probe.c"
+    source = "#include <stddef.h>\n#include <stdarg.h>\n#include <stdint.h>\nuint64_t x;\n"
+    tu = cl.Index.create().parse(probe, args=["-x", "c"], unsaved_files=[(probe, source)])
+    return not any(d.severity >= cl.Diagnostic.Error for d in tu.diagnostics)
+
+
+def clang_candidates(major: int) -> list[str]:
+    """Where a clang of the given major version is usually installed."""
+    found = [shutil.which(f"clang-{major}"), shutil.which("clang")]
+    found += [str(p) for p in (Path(f"/usr/lib/llvm-{major}/bin/clang"),
+                               Path(f"/usr/local/opt/llvm@{major}/bin/clang"),
+                               Path(f"/opt/homebrew/opt/llvm@{major}/bin/clang"),
+                               Path(f"/usr/local/llvm{major}/bin/clang"),
+                               Path("C:/Program Files/LLVM/bin/clang.exe")) if p.is_file()]
+    return list(dict.fromkeys(e for e in found if e))
+
+
+def resource_include(exe: str) -> Optional[str]:
     try:
         out = subprocess.run([exe, "-print-resource-dir"], capture_output=True, text=True, check=True)
     except (OSError, subprocess.CalledProcessError):
         return None
     include = Path(out.stdout.strip()) / "include"
     return str(include) if include.is_dir() else None
+
+
+def find_resource_include(clang_exe: Optional[str]) -> Optional[str]:
+    """
+    The builtin headers (stddef.h, stdint.h, ...) for libclang to parse with.
+
+    The pip "libclang" package doesn't ship them, so they are borrowed from an
+    installed clang, which must be libclang's own version: libclang still
+    searches its own builtin directory, and a different version's stdint.h
+    shares its include guard, so "#include_next <stdint.h>" stops there and
+    never reaches the C library's (every uint64_t is then an unknown type).
+    """
+    major = libclang_major_version()
+    if clang_exe:
+        found = clang_major_version(clang_exe)
+        if major and found and found != major:
+            print(f"warning: --clang is clang {found} but libclang is {major}; "
+                  f"stdint.h types may be missing", file=sys.stderr)
+        return resource_include(clang_exe)
+
+    if libclang_has_builtin_headers():
+        return None
+    if major is not None:
+        for exe in clang_candidates(major):
+            if clang_major_version(exe) == major:
+                return resource_include(exe)
+
+    fallback = shutil.which("clang")
+    if fallback is None:
+        print("warning: libclang has no builtin headers and no clang was found; pass --clang", file=sys.stderr)
+        return None
+    print(f"warning: no clang {major or '?'} found to match libclang; borrowing {fallback}'s builtin headers, "
+          f"which may hide stdint.h types (pass --clang)", file=sys.stderr)
+    return resource_include(fallback)
+
+
+def library_exports(library: str) -> set[str]:
+    """The function names a shared library exports, read with nm (or llvm-nm)."""
+    path = Path(library)
+    flags = ["-g", "--defined-only"] if path.suffix in (".dylib", ".dll") else ["-D", "--defined-only"]
+    for nm in ("nm", "llvm-nm"):
+        exe = shutil.which(nm)
+        if exe is None:
+            continue
+        out = subprocess.run([exe, *flags, str(path)], capture_output=True, text=True)
+        if out.returncode != 0:
+            continue
+        names = set()
+        for line in out.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 3 and parts[-2] in ("T", "W", "i"):  # code, weak code, ifunc
+                name = parts[-1].split("@")[0]  # glibc versions: "SSL_new@@OPENSSL_4.0.0"
+                names.add(name[1:] if path.suffix == ".dylib" and name.startswith("_") else name)
+        return names
+    raise SystemExit(f"error: cannot read the exports of {library} (nm or llvm-nm is needed)")
+
+
+def expand_headers(paths: list[str]) -> list[str]:
+    """A folder stands for every .h directly in it."""
+    headers = []
+    for p in paths:
+        headers += sorted(str(h) for h in Path(p).glob("*.h")) if Path(p).is_dir() else [p]
+    return headers
 
 
 def parse_headers(headers: list[str], clang_args: list[str], want_macros: bool) -> list[cl.TranslationUnit]:
@@ -624,6 +772,7 @@ def report_diagnostics(tus: list[cl.TranslationUnit], verbose: bool) -> int:
 
 def main(argv: Optional[list[str]] = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    command = shlex.join(["python", "tools/main.py", *argv])
     clang_extra: list[str] = []
     if "--" in argv:
         split = argv.index("--")
@@ -632,7 +781,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(
         description="Generate S++ FFI bindings from C headers.",
         epilog="Arguments after \"--\" are passed straight to clang (e.g. --target=..., -std=c23).")
-    ap.add_argument("headers", nargs="+", help="the public header(s) of the library")
+    ap.add_argument("headers", nargs="+", help="the public header(s) of the library, or folders of them")
     ap.add_argument("-o", "--output", help="write here instead of stdout")
     ap.add_argument("-I", dest="include_dirs", action="append", default=[], metavar="DIR", help="include directory")
     ap.add_argument("-D", dest="defines", action="append", default=[], metavar="NAME[=VALUE]", help="define a macro")
@@ -646,6 +795,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--constants", action="store_true", help="also emit enum constants and integer #defines")
     ap.add_argument("--constants-root", action="append", default=[], metavar="PATH",
                     help="only emit constants defined under PATH (default: the same as --root)")
+    ap.add_argument("--library", metavar="FILE",
+                    help="only bind functions this .so/.dylib exports (to split one header set across libraries)")
     ap.add_argument("--no-comments", action="store_true", help="don't copy doc comments across")
     ap.add_argument("--libclang", metavar="FILE", help="path to libclang.so/.dylib/.dll")
     ap.add_argument("--clang", metavar="EXE", help="clang executable used to find the builtin headers")
@@ -657,8 +808,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         cl.Config.set_library_file(args.libclang)
 
     for h in args.headers:
-        if not Path(h).is_file():
-            ap.error(f"no such header: {h}")
+        if not Path(h).exists():
+            ap.error(f"no such header or folder: {h}")
+    headers = expand_headers(args.headers)
+    if not headers:
+        ap.error("no headers found")
 
     clang_args = ["-x", "c", "-std=c17"]
     clang_args += [f"-I{d}" for d in args.include_dirs]
@@ -668,12 +822,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         clang_args += ["-isystem", resource_include]
     clang_args += clang_extra
 
-    roots = [Path(r).resolve() for r in args.root] or sorted({Path(h).resolve().parent for h in args.headers})
+    roots = [Path(r).resolve() for r in args.root] or sorted(
+        {Path(h).resolve() if Path(h).is_dir() else Path(h).resolve().parent for h in args.headers})
     constant_roots = [Path(r).resolve() for r in args.constants_root]
     opts = Options(roots=roots, prefixes=args.prefix, constant_roots=constant_roots, keep_prefix=args.keep_prefix,
-                   closure_types=set(args.closure_type), constants=args.constants, comments=not args.no_comments)
+                   closure_types=set(args.closure_type), constants=args.constants, comments=not args.no_comments,
+                   exports=library_exports(args.library) if args.library else None)
 
-    tus = parse_headers(args.headers, clang_args, want_macros=args.constants)
+    tus = parse_headers(headers, clang_args, want_macros=args.constants)
     if report_diagnostics(tus, args.verbose):
         print("error: the headers did not parse cleanly; fix the flags above (-I, -D, -- ...)", file=sys.stderr)
         return 1
@@ -683,8 +839,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         gen.visit(tu)
     for w in gen.warnings:
         print(f"warning: {w}", file=sys.stderr)
+    if gen.not_exported:
+        print(f"note: left out {len(gen.not_exported)} declared functions {args.library} doesn't export", file=sys.stderr)
 
-    spp = gen.render(args.headers)
+    spp = gen.render(args.headers, command)
     if args.output:
         Path(args.output).write_text(spp)
     else:

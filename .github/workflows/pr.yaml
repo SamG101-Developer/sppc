@@ -28,10 +28,9 @@ jobs:
 
   # One of the two required status checks for branch
   # protection, the other being "PR Title Format" from
-  # pr_title.yaml. The unready targets show red on their own
-  # while their ports are in progress, but they are
-  # "continue-on-error", so they do not fail "build" and
-  # never block a merge here.
+  # pr_title.yaml. Every target is "required", so any failing
+  # one fails "build" and blocks a merge here; a target marked
+  # "required: false" would be "continue-on-error" instead.
   ci-success:
     name: CI Success
     if: ${{ always() }}

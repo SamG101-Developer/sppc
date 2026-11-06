@@ -9,7 +9,6 @@
 #include <sppc/async/runtime.h>
 #include <sppc/async/vmem.h>
 #include <sppc/async/context.h>
-#include <sppc/platform/pthread_ext.h>
 #include <errno.h>
 #include <string.h>
 
@@ -59,7 +58,7 @@ void _gt_reap(void) {
     gt_task *const next = z->next;
     z->next = NULL;
     if (z->stack) {
-      _gt_stack_free(z->stack, z->stack_size);
+      _gt_task_stack_free(z->stack, z->stack_size);
       z->stack = NULL;
     }
     if (z->ustack) {
@@ -98,7 +97,7 @@ void _gt_switch_to(gt_task *next) {
   self->usp = __safestack_unsafe_stack_ptr;
   __safestack_unsafe_stack_ptr = next->usp;
 
-  _gt_switch(&self->sp, &next->sp);
+  _gt_context_switch(&self->sp, &next->sp);
 
   // Reached on the way back in, once something switches
   // to "self" again.
@@ -221,6 +220,17 @@ inline void _gt_init_slow(void) {
   main_task->state = GT_STATE_RUNNING;
   main_task->stack = NULL;
   main_task->usp = __safestack_unsafe_stack_ptr;
+#if SPPC_PLATFORM_WINDOWS
+  // Only a fiber can switch to one, so the thread becomes a fiber, unless
+  // its host made it one already (and so is the one to undo it).
+  if (IsThreadAFiber()) {
+    main_task->sp = _gt_current_fiber();
+  } else {
+    main_task->sp = ConvertThreadToFiberEx(NULL, FIBER_FLAG_FLOAT_SWITCH);
+    if (!main_task->sp) { _gt_panic("cannot make this thread a fiber for the green-thread runtime"); }
+    _gt_R.converted = 1;
+  }
+#endif
   _gt_R.current = main_task;
   _gt_io_setup();
 }
@@ -239,12 +249,12 @@ void _gt_set_stack_size(size_t bytes) {
 
 // ==================== SPAWN AND AWAIT ====================
 
-/// Where a task begins and ends. It is reached by the "ret"
-/// at the end of the first switch into the task, not by a
-/// call, so it has no caller to return to and must hand
-/// control on itself.
+/// Run the current task, from its first switch to its last:
+/// its body, then waking its awaiters and switching away for
+/// good. Only a fiber is ever switched back to after that, when
+/// it is handed the next task to run (async/context.h).
 _gnu_inline_va
-void _gt_trampoline(void) {
+void _gt_task_run(void) {
   gt_task *const self = _gt_R.current;
 
   // Reached with the previous task's stack already released
@@ -254,7 +264,7 @@ void _gt_trampoline(void) {
   if (_sppc_unlikely(_gt_R.zombies != NULL)) { _gt_reap(); }
 
   self->body.fn(self->body.env);
-  free(self->body.env);
+  _sppc_env_free(self->body.env);
   self->body.env = NULL;
   self->state = GT_STATE_DONE;
 
@@ -287,9 +297,30 @@ void _gt_trampoline(void) {
   _gt_R.current = next;
   next->state = GT_STATE_RUNNING;
   __safestack_unsafe_stack_ptr = next->usp;
-  _gt_switch(&self->sp, &next->sp);
+  _gt_context_switch(&self->sp, &next->sp);
+}
+
+/// Where a task begins and ends. It is reached by the "ret"
+/// at the end of the first switch into the task, not by a
+/// call, so it has no caller to return to and must hand
+/// control on itself.
+_gnu_inline_va
+void _gt_trampoline(void) {
+  _gt_task_run();
   _gt_panic("a finished task was resumed");
 }
+
+#if SPPC_PLATFORM_WINDOWS
+/// A fiber's whole life: one task after another. It is first
+/// switched to for the task it was made for, and again each time
+/// a spawn reuses it, with that task already the current one;
+/// it is only ever deleted while switched away.
+_gnu_inline_va
+void WINAPI _gt_fiber_main(LPVOID unused) {
+  (void)unused;
+  for (;;) { _gt_task_run(); }
+}
+#endif
 
 /// Allocate a new slot for the task, and a stack for the slot
 /// (and an unsafe stack if they are in use). Then set all
@@ -309,7 +340,7 @@ int _gt_spawn(gt_handle_t *out, const sppc_closure body, void (*entry)(void)) {
   // that the runtime has configured. Failing to acquire a
   // stack frees the slot too.
   const size_t size = _gt_R.stack_size;
-  void *const stack = _gt_stack_alloc(size);
+  void *const stack = _gt_task_stack_alloc(size);
   if (!stack) {
     _gt_slot_free(t);
     return SPPC_ENOMEM;
@@ -322,7 +353,7 @@ int _gt_spawn(gt_handle_t *out, const sppc_closure body, void (*entry)(void)) {
   if (_unsafe_stack_wanted) {
     ustack = _gt_stack_alloc(size);
     if (!ustack) {
-      _gt_stack_free(stack, size);
+      _gt_task_stack_free(stack, size);
       _gt_slot_free(t);
       return SPPC_ENOMEM;
     }
@@ -717,9 +748,9 @@ inline void _gt_teardown(void) {
 
   for (uint32_t i = 0; i < _gt_R.nslots; ++i) {
     gt_task *const t = _gt_R.slots[i];
-    if (t->stack && t->stack != live_stack) { _gt_stack_unmap(t->stack, t->stack_size); }
+    if (t->stack && t->stack != live_stack) { _gt_task_stack_unmap(t->stack, t->stack_size); }
     if (t->ustack) { _gt_stack_unmap(t->ustack, t->ustack_size); }
-    if (t->state != GT_STATE_FREE && t->state != GT_STATE_DONE) { free(t->body.env); }
+    if (t->state != GT_STATE_FREE && t->state != GT_STATE_DONE) { _sppc_env_free(t->body.env); }
     free(t);
   }
   free(_gt_R.slots);
@@ -727,6 +758,14 @@ inline void _gt_teardown(void) {
   while (_gt_R.stack_cached) {
     _gt_stack_unmap(_gt_R.stack_cache[--_gt_R.stack_cached], _gt_R.cached_size);
   }
+  _gt_task_stacks_flush();
+
+#if SPPC_PLATFORM_WINDOWS
+  // Back to a plain thread, if this runtime made it a fiber and is
+  // on that fiber; from inside a task (a thread ending there) the
+  // thread's own fiber cannot be let go.
+  if (_gt_R.converted && live_stack == NULL) { ConvertFiberToThread(); }
+#endif
 
   free(_gt_rt);
   _gt_rt = NULL;

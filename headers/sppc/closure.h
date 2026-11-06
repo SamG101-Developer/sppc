@@ -1,7 +1,18 @@
 #pragma once
 #include <sppc/macros.h>
 #include <stdint.h>
+#include <sppc/config.h>
 #include <stdlib.h>
+
+/// How the runtime frees a closure's environment. On Windows every block
+/// sppc frees carries sppc's own header (platform/windows.h), so the
+/// environment is the caller's "sppc_malloc" and goes back by "sppc_free".
+#if SPPC_PLATFORM_WINDOWS
+  _sppc_api inline void sppc_free(void *ptr);
+  #define _sppc_env_free sppc_free
+#else
+  #define _sppc_env_free free
+#endif
 
 /// An S++ callable is a closure: a function pointer plus
 /// the environment it captures, and the function's own
@@ -36,5 +47,5 @@ void _sppc_closure_discard(const sppc_closure closure) {
   sppc_closure_env *const env = (sppc_closure_env*)closure.env;
   if (env == NULL) { return; }
   if (env->drop_captures != NULL) { env->drop_captures(env); }
-  if (env->owns) { free(env); }
+  if (env->owns) { _sppc_env_free(env); }
 }

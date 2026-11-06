@@ -1,4 +1,5 @@
 #include "check.h"
+#include <signal.h>
 
 // The process: its environment, ids, randomness and standard streams, and
 // every way it ends - exit, halt, abort, a failed runtime check, a fatal
@@ -44,8 +45,13 @@ static void check_ids(void) {
   int32_t pid = 0, ppid = 0;
   sppc_get_pid(&pid);
   sppc_get_ppid(&ppid);
+#if SPPC_PLATFORM_WINDOWS
+  CHECK(pid > 0 && pid == (int32_t)GetCurrentProcessId());
+  CHECK(ppid > 0 && ppid != pid);
+#else
   CHECK(pid > 0 && pid == (int32_t)getpid());
   CHECK(ppid > 0 && ppid == (int32_t)getppid() && ppid != pid);
+#endif
 
   // Signal 0 only asks whether the process is there.
   CHECK(sppc_signal(pid, 0) == 0);
@@ -173,11 +179,13 @@ _gnu_noinline void sppc_test_fails_check_here(void) {
   after_call = 1;
 }
 
-static uint32_t which_check;
-static uint64_t check_a, check_b;
-
+// Which check fails, and with what, cross to the child in its environment:
+// a forked child would see globals, but Windows' child is the test run anew.
 static void fails_a_check(void) {
-  sppc_check_failed(which_check, check_a, check_b);
+  char spec[64];
+  unsigned long long check = 0, a = 0, b = 0;
+  if (sppc_getenv("SPPC_TEST_CHECK", spec, sizeof spec) == 0) { sscanf(spec, "%llu %llu %llu", &check, &a, &b); }
+  sppc_check_failed((uint32_t)check, a, b);
 }
 
 static void faults(void) {
@@ -189,11 +197,47 @@ static void raises_abort(void) {
   abort();
 }
 
+#if SPPC_PLATFORM_WINDOWS
+// Deep enough to overflow any stack; the volatile frame and the use after the
+// call keep it a real recursion, each call a frame.
+static volatile int recursion_limit = INT_MAX;
+
+_gnu_noinline int sppc_test_recurses(const int depth) {
+  volatile char frame[4096];
+  frame[0] = (char)depth;
+  if (depth == recursion_limit) { return 0; }
+  return sppc_test_recurses(depth + 1) + frame[0];
+}
+
+static void overflows_the_stack(void) {
+  after_call = sppc_test_recurses(0);
+}
+
+static void (*volatile faults_fn)(void) = faults;
+
+_gnu_noinline void faults_in_a_task_body(void *e) {
+  (void)e;
+  faults_fn();
+  after_call = 1; // not a tail jump, which would leave no frame of its own
+}
+
+/// A fault on a task's own stack (a fiber's).
+static void faults_in_a_task(void) {
+  int h = -1;
+  sppc_async(&h, (sppc_closure){faults_in_a_task_body, NULL});
+  sppc_await(h);
+}
+#endif
+
 static void signals_itself(void) {
   int32_t pid = 0;
   sppc_get_pid(&pid);
   sppc_signal(pid, SPPC_SIGTERM);
+#if SPPC_PLATFORM_WINDOWS
+  for (;;) { Sleep(INFINITE); }
+#else
   for (;;) { pause(); }
+#endif
 }
 
 static void aborts_quietly(void) {
@@ -206,9 +250,9 @@ static void aborts_quietly(void) {
 static char err[16384];
 
 static void expect_check(const uint32_t check, const uint64_t a, const uint64_t b, char const *message) {
-  which_check = check;
-  check_a = a;
-  check_b = b;
+  char spec[64];
+  snprintf(spec, sizeof spec, "%u %llu %llu", check, (unsigned long long)a, (unsigned long long)b);
+  sppc_setenv("SPPC_TEST_CHECK", spec, true);
   CHECK(check_dies(fails_a_check, err, sizeof err) == 134);
   if (strstr(err, message) == NULL) {
     printf("FAIL: check %u printed:\n%s\n(wanted \"%s\")\n", check, err, message);
@@ -255,15 +299,52 @@ static void check_endings(void) {
   expect_check(1, UINT64_MAX, 0, "index 18446744073709551615 out of bounds for length 0");
 
   // Fatal signals: reported, then the signal's own default action.
+#if !SPPC_PLATFORM_WINDOWS
   CHECK(check_dies(faults, err, sizeof err) == 128 + SIGSEGV);
   CHECK(strstr(err, "fatal signal: SIGSEGV") != NULL && strstr(err, "at address 0x0") != NULL);
   CHECK(strstr(err, "#0  faults+") != NULL);
   CHECK(check_dies(raises_abort, err, sizeof err) == 128 + SIGABRT);
   CHECK(strstr(err, "fatal signal: SIGABRT") != NULL);
+#else
+  // Windows' are exceptions: reported, then left to end the process as they
+  // would have, with the exception's own status.
+  CHECK(check_dies(faults, err, sizeof err) == (int)EXCEPTION_ACCESS_VIOLATION);
+  CHECK(strstr(err, "fatal exception: access violation writing address 0x0 (0xc0000005)") != NULL);
+  CHECK(strstr(err, "#0  faults+") != NULL);
+  CHECK(check_dies(faults_in_a_task, err, sizeof err) == (int)EXCEPTION_ACCESS_VIOLATION);
+  CHECK(strstr(err, "#0  faults+") != NULL && strstr(err, "faults_in_a_task_body+") != NULL);
+  CHECK(check_dies(overflows_the_stack, err, sizeof err) == (int)EXCEPTION_STACK_OVERFLOW);
+  CHECK(strstr(err, "fatal exception: stack overflow") != NULL && strstr(err, "sppc_test_recurses+") != NULL);
+  // abort's SIGABRT is the C library's: reported, then its own ending.
+  CHECK(check_dies(raises_abort, err, sizeof err) != 0);
+  CHECK(strstr(err, "fatal signal: SIGABRT") != NULL && strstr(err, "raises_abort+") != NULL);
+#endif
 
   // A signal sppc does not report ends the process with no report.
   CHECK(check_dies(signals_itself, err, sizeof err) == 128 + SIGTERM);
   CHECK(strstr(err, "[sppc]") == NULL);
+}
+
+// ==================== HARDENING ====================
+
+/// In a child: deny writable-and-executable memory, then ask for some.
+/// Exits 0 when refused, 1 when given it, 2 when the system has no switch
+/// for it (macOS, FreeBSD, a Linux before 6.3).
+static void denies_wx(void) {
+  if (sppc_deny_wx() != 0) { _exit(2); }
+#if SPPC_PLATFORM_WINDOWS
+  void *const p = VirtualAlloc(NULL, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+#else
+  void *p = mmap(NULL, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (p == MAP_FAILED) { p = NULL; }
+#endif
+  _exit(p == NULL ? 0 : 1);
+}
+
+static void check_hardening(void) {
+  const int status = check_dies(denies_wx, err, sizeof err);
+  if (status == 2) { printf("deny_wx has no switch here, not checked:\n%s", err); }
+  else { CHECK(status == 0); }
 }
 
 // ==================== TASK STACKS ====================
@@ -289,11 +370,13 @@ static void check_task_stack_size(void) {
 
 int main(void) {
   if (sppc_init() != 0) { return 1; }
+  check_child();
   check_environment();
   check_ids();
   check_random();
   check_streams();
   check_endings();
+  check_hardening();
   check_task_stack_size();
   sppc_cleanup();
   return check_done();

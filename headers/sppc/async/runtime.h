@@ -9,27 +9,39 @@
 
 #include <sppc/config.h>
 
-/// The i/o backend, picked per platform. io_uring on a Linux kernel (where
-/// setting it up can still fail at run time, and every call then falls back
-/// to its plain syscall); the blocking stand-in everywhere else for now.
-/// Defining SPPC_ASYNC_BLOCKING forces the stand-in, to test without a ring.
+/// The i/o backend, picked per platform. io_uring on a Linux kernel and an
+/// i/o completion port on Windows (where setting either up can still fail
+/// at run time, and every call then falls back to its plain one); the
+/// blocking stand-in everywhere else for now. Defining SPPC_ASYNC_BLOCKING
+/// forces the stand-in, to test without a backend.
 #if !defined(SPPC_ASYNC_BLOCKING) && SPPC_KERNEL_LINUX
   #define SPPC_ASYNC_IO_URING 1
 #else
   #define SPPC_ASYNC_IO_URING 0
 #endif
+#if !defined(SPPC_ASYNC_BLOCKING) && SPPC_PLATFORM_WINDOWS
+  #define SPPC_ASYNC_IOCP 1
+#else
+  #define SPPC_ASYNC_IOCP 0
+#endif
 
 #include <sppc/macros.h>
 #include <sppc/closure.h>
 #include <sppc/types.h>
-#include <pthread.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/mman.h>
 #include <time.h>
+#if !SPPC_PLATFORM_WINDOWS
+  #include <sys/mman.h>
+#endif
+
+// The pthreads and clocks the runtime stands on (its thread-exit key, and
+// every lock it integrates with) are the platform's, in place before this is
+// included (platform/posix.h, platform/darwin.h, platform/windows.h): the
+// runtime is only ever read through sppc/sppc.h.
 
 // "MAP_NORESERVE" keeps Linux from reserving swap for a mapping
 // only part of which is ever touched. FreeBSD has dropped the
@@ -43,7 +55,9 @@
 #define GT_IDX_BITS 20u
 #define GT_IDX_MASK ((1u << GT_IDX_BITS) - 1u)
 #define GT_GEN_MASK 0x7FFu
-#define GT_MAP_FLAGS (MAP_PRIVATE | MAP_ANONYMOUS | _SPPC_MAP_NORESERVE)
+#if !SPPC_PLATFORM_WINDOWS
+  #define GT_MAP_FLAGS (MAP_PRIVATE | MAP_ANONYMOUS | _SPPC_MAP_NORESERVE)
+#endif
 #define GT_STACK_SIZE (128u * 1024u)
 #define GT_STACK_MIN (16u * 1024u)
 #define GT_STACK_CACHE 32u
@@ -70,6 +84,43 @@ typedef struct gt_io {
 
 typedef struct gt_io_task {
   struct __kernel_timespec ts;
+} gt_io_task;
+#elif SPPC_ASYNC_IOCP
+struct gt_task;
+
+/// ntdll's wait completion packets, which post a packet to a port when an
+/// object (the sleep timer) is signalled. Not in the SDK's headers.
+typedef LONG (NTAPI *gt_nt_associate_fn)(HANDLE packet, HANDLE port, HANDLE target, PVOID key, PVOID apc,
+  LONG status, ULONG_PTR information, BOOLEAN *already_signaled);
+typedef LONG (NTAPI *gt_nt_cancel_fn)(HANDLE packet, BOOLEAN remove_signaled);
+
+/// The thread's completion port, and what its sleeps are timed with: one
+/// high-resolution timer set to the earliest, its expiry posted to the port
+/// through a wait completion packet ("armed" while one is on its way).
+typedef struct gt_io {
+  HANDLE port;
+  int ok;
+  // This runtime's, unique in the process: what a socket tied to its port
+  // records (a port's handle value could be reused by a later one).
+  LONG64 id;
+  HANDLE timer;
+  HANDLE packet;
+  bool armed;
+  gt_nt_associate_fn associate;
+  gt_nt_cancel_fn cancel;
+  // Tasks sleeping, the earliest deadline first.
+  struct gt_task *sleepers;
+} gt_io;
+
+/// What a task's outstanding operation needs to outlive the call that
+/// started it: its OVERLAPPED, the handle it is on (to cancel it at
+/// teardown; NULL when nothing is outstanding), and, for a sleep, its
+/// monotonic deadline (ns) and place among the sleepers.
+typedef struct gt_io_task {
+  OVERLAPPED ov;
+  HANDLE handle;
+  int64_t deadline;
+  struct gt_task *next_sleeper;
 } gt_io_task;
 #else
 /// No backend: nothing is kept, as nothing is ever outstanding.
@@ -181,6 +232,18 @@ typedef struct gt_runtime {
   // Tasks waiting on a thread lock, oldest first, so an unlock
   // can hand the lock to the one that has waited longest.
   gt_lock_waiter *lock_waiters;
+
+#if SPPC_PLATFORM_WINDOWS
+  // A task's stack there is a fiber's, which Windows maps and only a
+  // fiber can be handed it again, so finished fibers are kept for
+  // reuse as stacks are elsewhere (unsafe stacks still use the stack
+  // cache above). "converted" is whether this runtime made the thread
+  // a fiber, and so is the one to make it a thread again.
+  void *fiber_cache[GT_STACK_CACHE];
+  unsigned fibers_cached;
+  size_t fiber_cached_size;
+  int converted;
+#endif
 } gt_runtime;
 
 /// The runtime is reached through a thread-local pointer rather than
@@ -210,12 +273,21 @@ inline void _gt_io_teardown(void);
 inline void _gt_io_poll(int block);
 inline void _gt_io_poll_until(clockid_t clock, struct timespec const *deadline);
 
+// mingw's "vfprintf" is a static wrapper (its own stdio, which
+// "_GNU_SOURCE" turns on), which an inline function with external
+// linkage may not call (C17 6.7.4p3); this is the function it wraps.
+#if defined(__MINGW32__)
+  #define _gt_vfprintf __mingw_vfprintf
+#else
+  #define _gt_vfprintf vfprintf
+#endif
+
 _gnu_noreturn _gnu_cold _gnu_nonnull(1) _gnu_format_printf(1, 2)
 _gnu_inline_va void _gt_panic(const char *msg, ...) {
   va_list ap;
   va_start(ap, msg);
   fputs("[sppc] [CRITICAL] ", stderr);
-  vfprintf(stderr, msg, ap);
+  _gt_vfprintf(stderr, msg, ap);
   fputc('\n', stderr);
   va_end(ap);
   abort();

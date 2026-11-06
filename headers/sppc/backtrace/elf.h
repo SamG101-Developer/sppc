@@ -252,8 +252,6 @@ inline bool _sppc_bt_secure(void) {
 #endif
 }
 
-inline size_t _sppc_bt_frames(void **frames, size_t max, void const *uctx);
-
 #if SPPC_KERNEL_FREEBSD
 /// The executable's program headers: those of the first object loaded, as
 /// FreeBSD's aux vector does not give them out ("AT_PHDR").
