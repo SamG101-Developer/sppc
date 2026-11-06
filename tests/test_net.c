@@ -10,6 +10,11 @@ static const uint16_t v6_loopback[8] = {0, 0, 0, 0, 0, 0, 0, 1};
 
 static int have_v6 = 0;
 
+static void sleep_ms(const uint64_t ms) {
+  const sppc_timespec d = {0, ms * 1000000};
+  sppc_clock_nanosleep(SPPC_CLOCK_MONOTONIC, 0, &d);
+}
+
 /// A listening TCP socket on an ephemeral loopback port, and that port.
 static int listener(const int family, uint16_t *out_port) {
   int fd = -1;
@@ -147,7 +152,7 @@ static void check_tcp(const int family) {
   // The peer's reset arrives after the first write, and not always at once.
   for (int i = 0; i < 100 && rc == 0; ++i) {
     rc = sppc_send(server, "x", 1, 0, &n);
-    if (rc == 0) { usleep(1000); }
+    if (rc == 0) { sleep_ms(1); }
   }
   CHECK(rc == SPPC_EPIPE || rc == SPPC_ECONNRESET);
   if (rc != SPPC_EPIPE && rc != SPPC_ECONNRESET) { printf("  send after close: %d\n", rc); }
@@ -206,6 +211,127 @@ static void check_udp(const int family) {
 
   sppc_close(a);
   sppc_close(b);
+}
+
+// ==================== OPTIONS ====================
+
+static void check_options(void) {
+  int fd = -1, v = -1;
+  CHECK(sppc_socket(SPPC_AF_INET, SPPC_SOCK_STREAM, 0, &fd) == 0);
+
+  // What is set comes back, through sppc's levels and names.
+  const int on = 1;
+  CHECK(sppc_setsockopt(fd, SPPC_SOL_SOCKET, SPPC_SO_REUSEADDR, &on) == 0);
+  CHECK(sppc_getsockopt(fd, SPPC_SOL_SOCKET, SPPC_SO_REUSEADDR, &v) == 0 && v != 0);
+  CHECK(sppc_setsockopt(fd, SPPC_IPPROTO_TCP, SPPC_TCP_NODELAY, &on) == 0);
+  CHECK(sppc_getsockopt(fd, SPPC_IPPROTO_TCP, SPPC_TCP_NODELAY, &v) == 0 && v != 0);
+  CHECK(sppc_getsockopt(fd, SPPC_SOL_SOCKET, SPPC_SO_TYPE, &v) == 0 && v == SPPC_SOCK_STREAM);
+  CHECK(sppc_getsockopt(fd, SPPC_SOL_SOCKET, SPPC_SO_ERROR, &v) == 0 && v == 0);
+
+  const sppc_timeval wait = {2, 500000};
+  sppc_timeval back = {0, 0};
+  CHECK(sppc_setsockopt_timeval(fd, SPPC_SOL_SOCKET, SPPC_SO_RCVTIMEO, &wait) == 0);
+  CHECK(sppc_getsockopt_timeval(fd, SPPC_SOL_SOCKET, SPPC_SO_RCVTIMEO, &back) == 0 && back.sec == 2 && back.usec == 500000);
+  const sppc_timeval bad = {0, 1000000};
+  CHECK(sppc_setsockopt_timeval(fd, SPPC_SOL_SOCKET, SPPC_SO_SNDTIMEO, &bad) == SPPC_EINVAL);
+
+  const sppc_linger linger = {1, 5};
+  sppc_linger got = {0, 0};
+  CHECK(sppc_setsockopt_linger(fd, SPPC_SOL_SOCKET, SPPC_SO_LINGER, &linger) == 0);
+  CHECK(sppc_getsockopt_linger(fd, SPPC_SOL_SOCKET, SPPC_SO_LINGER, &got) == 0 && got.onoff != 0 && got.linger == 5);
+
+  // Names sppc has no translation for, and descriptors that are no socket.
+  CHECK(sppc_getsockopt(fd, SPPC_SOL_SOCKET, 0x7777, &v) == SPPC_ENOPROTOOPT);
+  CHECK(sppc_getsockopt(fd, 0x7777, SPPC_SO_TYPE, &v) == SPPC_ENOPROTOOPT);
+  int pr = -1, pw = -1;
+  CHECK(sppc_pipe(&pr, &pw) == 0);
+  CHECK(sppc_getsockopt(pr, SPPC_SOL_SOCKET, SPPC_SO_TYPE, &v) == SPPC_ENOTSOCK);
+  sppc_close(pr);
+  sppc_close(pw);
+
+  // A socket is a socket to fstat.
+  struct sppc_stat st;
+  CHECK(sppc_fstat(fd, &st) == 0 && (st.mode & SPPC_S_IFMT) == SPPC_S_IFSOCK);
+  sppc_close(fd);
+}
+
+// ==================== READINESS ====================
+
+static void check_readiness(void) {
+  uint16_t port = 0;
+  const int lfd = listener(SPPC_AF_INET, &port);
+  int client = -1, server = -1, n = -1;
+  sppc_sockaddr_storage addr, peer;
+  loopback_addr(SPPC_AF_INET, port, &addr);
+
+  // Nothing waiting, nothing ready.
+  sppc_pollfd one = {lfd, SPPC_POLLIN, 0};
+  CHECK(sppc_poll(&one, 1, 0, &n) == 0 && n == 0 && one.revents == 0);
+
+  // A connection waiting makes the listener readable; a connected socket is
+  // writable, and readable once there is data.
+  CHECK(sppc_socket(SPPC_AF_INET, SPPC_SOCK_STREAM, 0, &client) == 0);
+  CHECK(sppc_connect(client, &addr) == 0);
+  CHECK(sppc_poll(&one, 1, 1000, &n) == 0 && n == 1 && (one.revents & SPPC_POLLIN));
+  CHECK(sppc_accept(lfd, &peer, &server) == 0);
+  ssize_t sent = 0;
+  CHECK(sppc_write("data", 1, 4, client, &sent) == 0 && sent == 4); // write works on a socket too
+  sppc_pollfd both[3] = {{server, SPPC_POLLIN, 0}, {client, SPPC_POLLOUT, 0}, {-1, SPPC_POLLIN, 0}};
+  CHECK(sppc_poll(both, 3, 1000, &n) == 0 && n == 2);
+  CHECK((both[0].revents & SPPC_POLLIN) && (both[1].revents & SPPC_POLLOUT) && both[2].revents == 0);
+
+  // A pipe beside the sockets, and a descriptor that is not open.
+  int pr = -1, pw = -1;
+  CHECK(sppc_pipe(&pr, &pw) == 0);
+  sppc_pollfd mixed[3] = {{pr, SPPC_POLLIN, 0}, {client, SPPC_POLLIN, 0}, {9999, SPPC_POLLIN, 0}};
+  CHECK(sppc_poll(mixed, 2, 0, &n) == 0 && n == 0);
+  CHECK(sppc_write("p", 1, 1, pw, &sent) == 0);
+  CHECK(sppc_poll(mixed, 3, 1000, &n) == 0 && n == 2);
+  CHECK((mixed[0].revents & SPPC_POLLIN) && mixed[1].revents == 0 && (mixed[2].revents & SPPC_POLLNVAL));
+  CHECK(sppc_poll(mixed, 1, 0, &n) == 0 && n == 1); // still there: poll does not take it
+  sppc_close(pr);
+  sppc_close(pw);
+
+  // select: the same, through descriptor sets.
+  sppc_fd_set rd, wr;
+  memset(&rd, 0, sizeof rd);
+  memset(&wr, 0, sizeof wr);
+  rd.bits[server / 64] |= (uint64_t)1 << (server % 64);
+  wr.bits[client / 64] |= (uint64_t)1 << (client % 64);
+  sppc_timeval tv = {1, 0};
+  const int top = (server > client ? server : client) + 1;
+  CHECK(sppc_select(top, &rd, &wr, NULL, &tv, &n) == 0 && n == 2);
+  CHECK((rd.bits[server / 64] >> (server % 64) & 1u) && (wr.bits[client / 64] >> (client % 64) & 1u));
+  char buf[8];
+  ssize_t got = 0;
+  CHECK(sppc_read(buf, 1, sizeof buf, server, &got) == 0 && got == 4 && memcmp(buf, "data", 4) == 0);
+  memset(&rd, 0, sizeof rd);
+  rd.bits[server / 64] |= (uint64_t)1 << (server % 64);
+  tv = (sppc_timeval){0, 20000};
+  CHECK(sppc_select(top, &rd, NULL, NULL, &tv, &n) == 0 && n == 0 && rd.bits[server / 64] == 0);
+  CHECK(sppc_select(-1, NULL, NULL, NULL, NULL, &n) == SPPC_EINVAL);
+
+  // O_NONBLOCK through fcntl: a receive, read or accept with nothing there says so.
+  int flags = 0;
+  CHECK(sppc_fcntl_get(server, SPPC_F_GETFL, &flags) == 0);
+  CHECK(sppc_fcntl_set(server, SPPC_F_SETFL, flags | SPPC_O_NONBLOCK) == 0);
+  CHECK(sppc_recv(server, buf, sizeof buf, 0, &got) == SPPC_EAGAIN);
+  CHECK(sppc_read(buf, 1, sizeof buf, server, &got) == SPPC_EAGAIN);
+  CHECK(sppc_fcntl_set(server, SPPC_F_SETFL, flags) == 0);
+  int accepted = -1;
+  CHECK(sppc_fcntl_get(lfd, SPPC_F_GETFL, &flags) == 0);
+  CHECK(sppc_fcntl_set(lfd, SPPC_F_SETFL, flags | SPPC_O_NONBLOCK) == 0);
+  CHECK(sppc_accept(lfd, &peer, &accepted) == SPPC_EAGAIN && accepted == -1);
+
+  // The peer's end of stream is readable.
+  CHECK(sppc_shutdown(client, SPPC_SHUT_WR) == 0);
+  one = (sppc_pollfd){server, SPPC_POLLIN, 0};
+  CHECK(sppc_poll(&one, 1, 1000, &n) == 0 && n == 1 && (one.revents & (SPPC_POLLIN | SPPC_POLLHUP)));
+  CHECK(sppc_recv(server, buf, sizeof buf, 0, &got) == 0 && got == 0);
+
+  sppc_close(server);
+  sppc_close(client);
+  sppc_close(lfd);
 }
 
 // ==================== ASYNC ====================
@@ -288,6 +414,8 @@ int main(void) {
   if (!have_v6) { printf("note: no IPv6 loopback here; the IPv6 checks are skipped\n"); }
 
   check_addresses();
+  check_options();
+  check_readiness();
   check_tcp(SPPC_AF_INET);
   check_udp(SPPC_AF_INET);
   // Only with a ring: without one, the server's accept blocks the thread

@@ -29,7 +29,7 @@ int main(void) {
   void *slots[3] = {0};
   int h[3];
   for (int i = 0; i < 3; ++i) {
-    env_t *e = malloc(sizeof *e); e->id = i; e->slot = &slots[i];
+    env_t *e = sppc_malloc(sizeof *e); e->id = i; e->slot = &slots[i];
     assert(sppc_async(&h[i], (sppc_closure){body, e}) == 0);
   }
   for (int i = 0; i < 3; ++i) assert(sppc_await(h[i]) == 0);
