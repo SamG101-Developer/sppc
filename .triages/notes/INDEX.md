@@ -16,3 +16,4 @@ Paths are relative to this folder. Read a note before relying on its one-line su
 - [msvc /O2 hang on equal args](ci/msvc-o2-hang-equal-args.md) — cl 14.52 never finishes inlining checks on one value passed twice; sppc_mmap forwards out of line
 - [Bindgen libclang/clang mismatch](tools/bindgen-libclang-resource-dir-mismatch.md) — builtin headers from another clang version hide stdint types; tools/main.py now picks a matching clang
 - [Byte pointer params](tools/bindgen-byte-pointer-params.md) — void*/char*/unsigned char* params → CRefBytePtr/CMutBytePtr by constness; returns, fields, handles stay CVoidPtr
+- [FreeBSD loopback is deferred](tests/freebsd-loopback-delivery-deferred.md) — written TCP data reaches the peer later; poll the receiver alone before multi-fd or zero-timeout checks

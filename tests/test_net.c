@@ -276,6 +276,10 @@ static void check_readiness(void) {
   CHECK(sppc_accept(lfd, &peer, &server) == 0);
   ssize_t sent = 0;
   CHECK(sppc_write("data", 1, 4, client, &sent) == 0 && sent == 4); // write works on a socket too
+  // FreeBSD's loopback queues the data for another thread to deliver, and a
+  // poll of both would return as soon as the client is writable: wait for it.
+  sppc_pollfd arrived = {server, SPPC_POLLIN, 0};
+  CHECK(sppc_poll(&arrived, 1, 1000, &n) == 0 && n == 1);
   sppc_pollfd both[3] = {{server, SPPC_POLLIN, 0}, {client, SPPC_POLLOUT, 0}, {-1, SPPC_POLLIN, 0}};
   CHECK(sppc_poll(both, 3, 1000, &n) == 0 && n == 2);
   CHECK((both[0].revents & SPPC_POLLIN) && (both[1].revents & SPPC_POLLOUT) && both[2].revents == 0);
