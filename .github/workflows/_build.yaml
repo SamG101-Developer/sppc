@@ -14,10 +14,10 @@
 # "packages" anything else they need to run; "test: false" builds
 # a target the runner cannot run at all (x32: Ubuntu's kernels
 # leave the x32 syscalls out, and qemu-user has none). Every
-# target builds every time, so a port's progress shows, but
-# only a "ready" one counts: an unready target may fail
-# without failing the build, and never uploads, so it is
-# never shipped.
+# target builds every time, and "required" ones (all of them)
+# fail the build when they fail; a "required: false" one runs
+# with continue-on-error, for a port still in progress. Only a
+# "ready" target uploads, so an unready one is never shipped.
 
 name: build
 
@@ -48,7 +48,7 @@ jobs:
           - { target: aarch64-linux-gnu,   os: ubuntu-24.04-arm, compiler: gcc,   required: true,  ready: true,  files: libsppc.so }
           - { target: x86_64-macos,        os: macos-15-intel,   compiler: clang, required: true,  ready: true, files: libsppc.dylib }
           - { target: aarch64-macos,       os: macos-15,         compiler: clang, required: true,  ready: true, files: libsppc.dylib }
-          - { target: x86_64-windows-msvc, os: windows-latest,   compiler: msvc,  required: false, ready: false, files: sppc.dll sppc.lib }
+          - { target: x86_64-windows-msvc, os: windows-latest,   compiler: msvc,  required: true, ready: false, files: sppc.dll sppc.lib }
           - { target: i386-linux-gnu,      os: ubuntu-24.04,     compiler: i686-linux-gnu-gcc,  cross: i686-linux-gnu,  arch: i686,  packages: libc6-i386, required: true, ready: true, files: libsppc.so }
           - { target: s390x-linux-gnu,     os: ubuntu-24.04,     compiler: s390x-linux-gnu-gcc, cross: s390x-linux-gnu, arch: s390x, qemu: s390x, required: true, ready: true, files: libsppc.so }
           - { target: powerpc64le-linux-gnu, os: ubuntu-24.04,   compiler: powerpc64le-linux-gnu-gcc, cross: powerpc64le-linux-gnu, arch: ppc64le, qemu: ppc64le, required: true, ready: true, files: libsppc.so }
@@ -60,7 +60,7 @@ jobs:
           - { target: mips-linux-gnu,      os: ubuntu-24.04,     compiler: mips-linux-gnu-gcc, cross: mips-linux-gnu, arch: mips, qemu: mips, required: true, ready: true, files: libsppc.so }
           - { target: mipsel-linux-gnu,    os: ubuntu-24.04,     compiler: mipsel-linux-gnu-gcc, cross: mipsel-linux-gnu, arch: mipsel, qemu: mipsel, required: true, ready: true, files: libsppc.so }
           - { target: mips64el-linux-gnuabi64, os: ubuntu-24.04, compiler: mips64el-linux-gnuabi64-gcc, cross: mips64el-linux-gnuabi64, arch: mips64el, qemu: mips64el, required: true, ready: true, files: libsppc.so }
-          - { target: loongarch64-linux-gnu, os: ubuntu-24.04,   compiler: loongarch64-linux-gnu-gcc-14, cross: loongarch64-linux-gnu, toolchain: gcc-14-loongarch64-linux-gnu, arch: loongarch64, qemu: loongarch64, required: false, ready: true, files: libsppc.so }
+          - { target: loongarch64-linux-gnu, os: ubuntu-24.04,   compiler: loongarch64-linux-gnu-gcc-14, cross: loongarch64-linux-gnu, toolchain: gcc-14-loongarch64-linux-gnu, arch: loongarch64, qemu: loongarch64, required: true, ready: true, files: libsppc.so }
           - { target: aarch64_be-linux-gnu, os: ubuntu-24.04,    compiler: aarch64_be-none-linux-gnu-gcc, cross: aarch64_be-none-linux-gnu, toolchain: arm-gnu, arch: aarch64_be, qemu: aarch64_be, required: true, ready: true, files: libsppc.so }
           - { target: x86_64-linux-gnux32, os: ubuntu-24.04,     compiler: x86_64-linux-gnux32-gcc, cross: x86-64-linux-gnux32, arch: x86_64, packages: libc6-x32, test: false, required: true,  ready: true, files: libsppc.so }
           - { target: m68k-linux-gnu,      os: ubuntu-24.04,     compiler: m68k-linux-gnu-gcc, cross: m68k-linux-gnu, arch: m68k, qemu: m68k, required: true, ready: true, files: libsppc.so }
