@@ -54,7 +54,8 @@ Type mapping (C -> S++, see std::cffi):
     struct foo / foo_t           CFoo (a "cls" is generated for it)
     union, bitfields, ...        CFoo, as an opaque blob of the right size/alignment
     --closure-type struct        CClosure[(Params,), Ret]
-    void* / char*                CVoidPtr / CCharPtr
+    void* / char* (param)        CMutBytePtr (any char: plain, signed, unsigned, uint8_t)
+    const void* / const char*    CRefBytePtr (param)
     T* / const T*                &mut T / &T
     T** (any nested pointer)     &mut CVoidPtr / &CVoidPtr
     pointer to incomplete type   CVoidPtr (an opaque handle)
@@ -97,6 +98,9 @@ SPP_KEYWORDS = frozenset({
 
 SIGNED_BY_SIZE = {1: "CChar", 2: "CShort", 4: "CInt", 8: "CInt64"}
 UNSIGNED_BY_SIZE = {1: "CUChar", 2: "CUShort", 4: "CUInt", 8: "CUInt64"}
+# Pointees passed as a byte pointer (CRefBytePtr / CMutBytePtr): void and every char-sized type.
+BYTE_KINDS = {TK.VOID, TK.CHAR_S, TK.CHAR_U, TK.SCHAR, TK.UCHAR}
+
 SIGNED_KINDS = {TK.SCHAR, TK.SHORT, TK.INT, TK.LONG, TK.LONGLONG, TK.WCHAR}
 UNSIGNED_KINDS = {TK.UCHAR, TK.USHORT, TK.UINT, TK.ULONG, TK.ULONGLONG, TK.CHAR16, TK.CHAR32}
 
@@ -447,13 +451,13 @@ class Generator:
         if pointee_canon.kind in (TK.FUNCTIONPROTO, TK.FUNCTIONNOPROTO):
             self._notes.append(f"'{t.spelling}' is a raw C function pointer, passed as CVoidPtr")
             return self.use("CVoidPtr")
-        if pointee_canon.kind == TK.VOID:
-            return self.use("CVoidPtr")
         # Anything that may be null or must outlive the call can't be a borrow.
         if pos in (Pos.RETURN, Pos.FIELD, Pos.POINTEE):
             return self.use("CVoidPtr")
-        if pointee_canon.kind in (TK.CHAR_S, TK.CHAR_U):
-            return self.use("CCharPtr")
+        # Bytes: a buffer S++ hands over for the call, from std::cffi::view_ptr_ref / view_ptr_mut. The pointee's
+        # constness says whether C may write through it, so a read-only view never yields a writable pointer.
+        if pointee_canon.kind in BYTE_KINDS:
+            return self.use("CRefBytePtr" if pointee.is_const_qualified() else "CMutBytePtr")
         # An opaque handle: nothing on the S++ side can know its layout.
         if pointee_canon.kind == TK.RECORD and pointee_canon.get_size() < 0:
             return self.use("CVoidPtr")
