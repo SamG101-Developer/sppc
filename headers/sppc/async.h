@@ -34,6 +34,8 @@
 #include <sppc/async/sched.h>
 #if SPPC_ASYNC_IO_URING
   #include <sppc/async/io_uring.h>
+#elif SPPC_ASYNC_IOCP
+  #include <sppc/async/iocp.h>
 #else
   #include <sppc/async/blocking.h>
 #endif
