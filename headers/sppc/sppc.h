@@ -1,6 +1,8 @@
-/// The public api. Everything is defined in the files included here, chosen for
-/// the platform at compile time: the async runtime, crash reporting, and the
-/// platform layer that implements the "sppc_*" functions themselves.
+/// The public api, and the only header to include: everything is defined in
+/// the files included here, chosen for the platform at compile time. The
+/// platform's file includes the async runtime and the crash reporter itself,
+/// once the pthreads and clocks they stand on are in place, so neither is
+/// meant to be included on its own.
 
 #pragma once
 #ifndef _GNU_SOURCE
@@ -15,10 +17,12 @@
 #endif
 
 #include <sppc/macros.h>
+#include <sppc/types.h>
+#include <sppc/errors.h>
 #include <sppc/closure.h>
-#include <sppc/async.h>
-#include <sppc/backtrace.h>
 
+// The platform's file, which includes the async runtime and the crash
+// reporter once what they stand on is in place, and the api over them.
 #if SPPC_KERNEL_LINUX
   #include <sppc/platform/linux.h>
 #elif SPPC_KERNEL_DARWIN

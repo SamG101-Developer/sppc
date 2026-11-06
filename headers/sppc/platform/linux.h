@@ -4,7 +4,7 @@
 /// calls of its own, rather than the POSIX ones in
 /// platform/posix.h: "sendfile" and process hardening (MDWE,
 /// mseal). Those it shares with FreeBSD are in
-/// platform/linux_freebsd.h. Darwin and FreeBSD define the
+/// platform/posix.h. Darwin and FreeBSD define the
 /// same functions in platform/darwin.h and platform/freebsd.h.
 
 #ifndef _GNU_SOURCE
@@ -12,7 +12,6 @@
 #endif
 
 #include <sppc/platform/posix.h>
-#include <sppc/platform/linux_freebsd.h>
 #include <link.h>
 #include <sys/auxv.h>
 #include <sys/prctl.h>
