@@ -924,11 +924,38 @@ _sppc_api int sppc_lseek(const int fd, const int64_t offset, const int whence, i
 _posix_syscall(9)
 _gnu_inline _gnu_malloc _gnu_alloc_size(2) // no fd_arg: MAP_ANONYMOUS passes -1
 _sppc_api void* sppc_mmap(const int fd, const size_t length, const int prot, const int flags, const int64_t offset) {
+  // FreeBSD maps memory neither shared nor private (as private), and an offset
+  // off a page boundary (rounded down, the pointer moved up to it), which POSIX
+  // and Linux refuse.
   int os_flags;
-  if ((prot & ~_SPPC_PROT_ALL) != 0 || _sppc_to_os_map_flags(flags, &os_flags) != 0) { return NULL; }
+  const int sharing = flags & (SPPC_MAP_SHARED | SPPC_MAP_PRIVATE);
+  if ((prot & ~_SPPC_PROT_ALL) != 0 || _sppc_to_os_map_flags(flags, &os_flags) != 0
+    || (sharing != SPPC_MAP_SHARED && sharing != SPPC_MAP_PRIVATE)
+    || offset < 0 || (uint64_t)offset % (uint64_t)sysconf(_SC_PAGESIZE) != 0) { return NULL; }
   _extract_err(void*) mmap(NULL, length, prot, os_flags, fd, (off_t)offset);
   _return_map_pointer
 }
+
+#if SPPC_KERNEL_FREEBSD
+/// SPPC_ENOMEM if any page in [addr, addr + size) is unmapped, else 0.
+/// FreeBSD's "mincore" refuses a range that starts outside a mapping or has
+/// a gap in it, and changes nothing; it is asked a stack buffer at a time.
+_gnu_inline
+int _sppc_freebsd_unmapped(void *const addr, const size_t size) {
+  char vec[1024];
+  const uintptr_t page = (uintptr_t)sysconf(_SC_PAGESIZE);
+  const uintptr_t chunk = sizeof vec * page;
+  const uintptr_t start = (uintptr_t)addr;
+  if (size > UINTPTR_MAX - start) { return SPPC_ENOMEM; }
+  const uintptr_t end = start + size;
+  for (uintptr_t at = start; at < end; at += chunk) {
+    const size_t n = end - at < chunk ? end - at : chunk;
+    if (mincore((void*)at, n, vec) != 0) { return _sppc_errno(errno); }
+    if (n < chunk) { break; }
+  }
+  return 0;
+}
+#endif
 
 _posix_syscall(10)
 _gnu_inline _gnu_nonnull(1)
@@ -938,6 +965,12 @@ _sppc_api int sppc_memprotect(void *addr, const size_t size, const int prot) {
   if ((prot & ~_SPPC_PROT_ALL) != 0 || (uintptr_t)addr % (uintptr_t)sysconf(_SC_PAGESIZE) != 0) {
     return SPPC_EINVAL;
   }
+#if SPPC_KERNEL_FREEBSD
+  // FreeBSD's "mprotect" changes what is mapped in the range and passes over
+  // what is not; POSIX and Linux refuse a range with unmapped pages in it.
+  const int unmapped = _sppc_freebsd_unmapped(addr, size);
+  if (unmapped != 0) { return unmapped; }
+#endif
   _extract_err(int) mprotect(addr, size, prot);
   _return_normalized_err
 }
@@ -1053,8 +1086,10 @@ _sppc_api void sppc_sched_yield(void) {
 _posix_syscall(26)
 _gnu_inline _gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)
 _sppc_api int sppc_msync(void *_sppc_restrict addr, size_t const *_sppc_restrict length, const int flags) {
+  // FreeBSD's MS_SYNC is 0, so it takes both together as MS_ASYNC alone.
   int os_flags;
-  if (_sppc_to_os_msync_flags(flags, &os_flags) != 0) { return SPPC_EINVAL; }
+  if (_sppc_to_os_msync_flags(flags, &os_flags) != 0
+    || (flags & (SPPC_MS_SYNC | SPPC_MS_ASYNC)) == (SPPC_MS_SYNC | SPPC_MS_ASYNC)) { return SPPC_EINVAL; }
   _extract_err(int) msync(addr, *length, os_flags);
   _return_normalized_err
 }
