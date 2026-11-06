@@ -93,8 +93,12 @@
 
 // Mark a function as being "no throw", using different attributes
 // for different compilers.
-#if SPPC_CC_MSVC
+// msvc knows "__declspec(nothrow)" only in c++; its C has nothing
+// that could throw to begin with.
+#if SPPC_CC_MSVC && defined(__cplusplus)
   #define _sppc_nothrow __declspec(nothrow)
+#elif SPPC_CC_MSVC
+  #define _sppc_nothrow
 #elif _sppc_has_attribute(nothrow)
   #define _sppc_nothrow __attribute__((nothrow))
 #else
@@ -107,9 +111,14 @@
 // with the build hiding everything else. Variables take
 // "_sppc_export" alone, as "nothrow" is for functions. Windows
 // cannot export a thread-local variable from a dll at all,
-// which matters only to the split-stack pointer.
-#if SPPC_PLATFORM_WINDOWS
+// which matters only to the split-stack pointer. "dllexport"
+// also makes gcc emit an inline function wherever its header is
+// read, so it is only spelt in the one file that emits the
+// library's copies (sppc.c, which defines _SPPC_EMIT).
+#if SPPC_PLATFORM_WINDOWS && defined(_SPPC_EMIT)
   #define _sppc_export __declspec(dllexport)
+#elif SPPC_PLATFORM_WINDOWS
+  #define _sppc_export
 #elif _sppc_has_attribute(visibility)
   #define _sppc_export __attribute__((visibility("default")))
 #else
@@ -213,6 +222,28 @@
   #define _sppc_tls_initial_exec __attribute__((tls_model("initial-exec")))
 #else
   #define _sppc_tls_initial_exec
+#endif
+
+// A variable placed in the named section, and kept although nothing
+// refers to it: how sppc.c puts its thread-exit hook into the Windows
+// TLS callback table. msvc also needs the section declared ("#pragma
+// section") and the symbol kept from the linker ("/INCLUDE"), which
+// sppc.c does beside it.
+#if SPPC_CC_MSVC
+  #define _sppc_section_used(name) __declspec(allocate(name))
+#elif _sppc_has_attribute(section) && _sppc_has_attribute(used)
+  #define _sppc_section_used(name) __attribute__((section(name), used))
+#else
+  #define _sppc_section_used(name)
+#endif
+
+// The address the current function returns to, for a backtrace that starts
+// at its caller. msvc spells it as an intrinsic.
+#if SPPC_CC_MSVC
+  #include <intrin.h>
+  #define _sppc_return_address() _ReturnAddress()
+#else
+  #define _sppc_return_address() __builtin_return_address(0)
 #endif
 
 // Helper macros for maintenance.
