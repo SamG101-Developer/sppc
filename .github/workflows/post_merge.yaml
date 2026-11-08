@@ -16,6 +16,7 @@
 #   ffi/sppc/x86_64-macos/libsppc.dylib
 #   ffi/sppc/aarch64-macos/libsppc.dylib
 #   ffi/sppc/x86_64-windows-msvc/[sppc.dll, sppc.lib]
+#   ffi/sppc/aarch64-windows-msvc/[sppc.dll, sppc.lib]
 #
 # "Up to date" is decided from the sources, not by comparing
 # binaries (a rebuilt library differs byte for byte whenever
