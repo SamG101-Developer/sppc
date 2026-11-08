@@ -9,7 +9,8 @@
 # what goes in it; "cross" the triple a target is cross-built
 # for on an x86-64 runner ("toolchain" its gcc package, where that
 # is not gcc-<cross>, or "arm-gnu" for Arm's own release, where
-# Ubuntu has none), "arch" its cpu, "qemu" the emulator
+# Ubuntu has none), "arch" its cpu (for msvc, the vcvarsall
+# target: "arm64" on the arm runner, else x64), "qemu" the emulator
 # its tests run under, if they cannot run natively, and
 # "packages" anything else they need to run; "test: false" builds
 # a target the runner cannot run at all (x32: Ubuntu's kernels
@@ -49,6 +50,7 @@ jobs:
           - { target: x86_64-macos,        os: macos-15-intel,   compiler: clang, required: true,  ready: true, files: libsppc.dylib }
           - { target: aarch64-macos,       os: macos-15,         compiler: clang, required: true,  ready: true, files: libsppc.dylib }
           - { target: x86_64-windows-msvc, os: windows-latest,   compiler: msvc,  required: true, ready: true, files: sppc.dll sppc.lib }
+          - { target: aarch64-windows-msvc, os: windows-11-arm,  compiler: msvc,  arch: arm64, required: true, ready: true, files: sppc.dll sppc.lib }
           - { target: i386-linux-gnu,      os: ubuntu-24.04,     compiler: i686-linux-gnu-gcc,  cross: i686-linux-gnu,  arch: i686,  packages: libc6-i386, required: true, ready: true, files: libsppc.so }
           - { target: s390x-linux-gnu,     os: ubuntu-24.04,     compiler: s390x-linux-gnu-gcc, cross: s390x-linux-gnu, arch: s390x, qemu: s390x, required: true, ready: true, files: libsppc.so }
           - { target: powerpc64le-linux-gnu, os: ubuntu-24.04,   compiler: powerpc64le-linux-gnu-gcc, cross: powerpc64le-linux-gnu, arch: ppc64le, qemu: ppc64le, required: true, ready: true, files: libsppc.so }
@@ -81,6 +83,8 @@ jobs:
           egress-policy: audit
           disable-sudo: ${{ !matrix.cross }}
 
+      # Windows arm64 has no agent: there the step logs as much and
+      # skips, so egress goes unenforced.
       - name: Harden Runner
         if: runner.os == 'Windows'
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
@@ -156,6 +160,8 @@ jobs:
       - name: Set up msvc
         if: matrix.compiler == 'msvc'
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756  # v1.13.0
+        with:
+          arch: ${{ matrix.arch || 'x64' }}
 
       # A cross build names the target system, and ctest runs each
       # test through qemu where the runner cannot run it.

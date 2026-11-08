@@ -1,7 +1,7 @@
 ---
 name: windows-native-from-wsl
 description: "Test the Windows port from WSL: mingw-w64 gcc/clang builds run natively through interop; msvc via a vcvars64 .bat run with cmd.exe"
-updated: 2026-11-04
+updated: 2026-11-08
 ---
 
 On a WSL2 dev box the Windows port needs no VM or CI round trip. A mingw build runs natively, since WSL interop
@@ -12,8 +12,11 @@ vcvars64.bat`, then runs `cl` or `cmake.exe -G Ninja` on the `\\wsl.localhost\<d
 build directory under `%TEMP%`. Run it with `cmd.exe /c "$(wslpath -w x.bat)"`; cmd's "UNC paths are not supported"
 warning is harmless.
 
-**Why:** CI's `x86_64-windows-msvc` target is `ready: false` and not required, so local runs are the real check
-while the port is partial; mingw and msvc differ (`_Thread_local` is emulated TLS under mingw gcc, `__forceinline`
+For arm64, `call vcvarsamd64_arm64.bat` instead and pass `-DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=ARM64`
+(the Hostx64\arm64 tools must be installed): that builds the library and every test, but an x64 host cannot run
+them, so only CI's `windows-11-arm` runner tests `aarch64-windows-msvc`.
+
+**Why:** local runs catch a Windows break in seconds rather than a CI round trip; mingw and msvc differ (`_Thread_local` is emulated TLS under mingw gcc, `__forceinline`
 under msvc `/Od`), so run both.
 
 **How to apply:** after any change under `platform/windows.h`, `platform/common.h`, `async/` or the Windows
