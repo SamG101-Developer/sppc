@@ -181,8 +181,6 @@ static void check_too_big(void) {
 // ==================== BYTES ====================
 
 static void check_bytes(void) {
-  char buf[16];
-
   // memcmp gives the sign only.
   int out = 99;
   CHECK(sppc_memcmp("abc", "abd", 3, &out) == 0 && out == -1);
