@@ -197,5 +197,9 @@ if (SPPC_BUILD_TESTS)
       COMMAND ${CMAKE_C_COMPILER} -std=c17 -pedantic-errors -Wall -Wextra -Wvla -Werror
       -fsyntax-only -D_FILE_OFFSET_BITS=64 ${strict_includes}
       ${CMAKE_CURRENT_SOURCE_DIR}/sources/sppc/sppc.c)
+
+    # It runs the compiler, not a built test, so a test run away from
+    # the build host (x32's VM) leaves it behind: "ctest -LE host".
+    set_tests_properties(test_strict_c17 PROPERTIES LABELS host)
   endif ()
 endif ()
