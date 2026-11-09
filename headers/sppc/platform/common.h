@@ -50,6 +50,12 @@ _gnu_nonnull(1, 3, 5)
 _sppc_api int sppc_memmem(
   void const *haystack, const size_t haystack_size, void const *needle,
   const size_t needle_size, size_t *_sppc_restrict out) {
+  // An empty needle is found at the start everywhere: Darwin's memmem, an old
+  // FreeBSD one, finds it nowhere.
+  if (needle_size == 0) {
+    *out = 0;
+    return 0;
+  }
   _extract_err(void*) _sppc_memmem(
     haystack, haystack_size, needle, needle_size);
   if (err != NULL) { *out = (size_t)((char*)err - (char*)haystack); }
