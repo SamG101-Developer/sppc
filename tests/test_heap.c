@@ -183,12 +183,6 @@ static void check_too_big(void) {
 static void check_bytes(void) {
   char buf[16];
 
-  // memmove: overlapping either way.
-  memcpy(buf, "abcdefgh", 8);
-  CHECK(sppc_memmove(buf + 2, buf, 5) == 0 && memcmp(buf, "ababcdeh", 8) == 0);
-  memcpy(buf, "abcdefgh", 8);
-  CHECK(sppc_memmove(buf, buf + 2, 5) == 0 && memcmp(buf, "cdefgfgh", 8) == 0);
-
   // memcmp gives the sign only.
   int out = 99;
   CHECK(sppc_memcmp("abc", "abd", 3, &out) == 0 && out == -1);

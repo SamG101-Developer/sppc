@@ -31,15 +31,6 @@
 
 // ==================== MEMORY ====================
 
-/// Move a memory region (pointers can overlap).
-_gnu_inline _gnu_hot _gnu_restrict_access(write_only, 1)
-_gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)
-_sppc_api int sppc_memmove(
-  void *dest, void const *src, const size_t size) {
-  memmove(dest, src, size);
-  return 0;
-}
-
 /// Compare two memory regions.
 _gnu_inline _gnu_hot _gnu_restrict_access(read_only, 1)
 _gnu_restrict_access(read_only, 2) _gnu_restrict_access(write_only, 4)
