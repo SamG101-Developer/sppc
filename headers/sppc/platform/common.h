@@ -31,35 +31,6 @@
 
 // ==================== MEMORY ====================
 
-/// Copy a memory region with indexing support.
-_gnu_inline _gnu_hot _gnu_restrict_access(write_only, 1)
-_gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)
-_sppc_api int sppc_memcpy(
-  void *_sppc_restrict dest, void const *_sppc_restrict src, const size_t size,
-  const size_t dest_index, const size_t src_index) {
-  memcpy((char*)dest + dest_index, (char const*)src + src_index, size);
-  return 0;
-}
-
-/// Move a memory region (pointers can overlap).
-_gnu_inline _gnu_hot _gnu_restrict_access(write_only, 1)
-_gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)
-_sppc_api int sppc_memmove(
-  void *dest, void const *src, const size_t size) {
-  memmove(dest, src, size);
-  return 0;
-}
-
-/// Set the bytes in a memory region.
-_gnu_inline _gnu_hot _gnu_restrict_access(write_only, 1)
-_gnu_nonnull(1)
-_sppc_api int sppc_memset(
-  void *_sppc_restrict dest, const int value, const size_t size,
-  const size_t dest_index) {
-  memset((char*)dest + dest_index, value, size);
-  return 0;
-}
-
 /// Compare two memory regions.
 _gnu_inline _gnu_hot _gnu_restrict_access(read_only, 1)
 _gnu_restrict_access(read_only, 2) _gnu_restrict_access(write_only, 4)
@@ -79,6 +50,12 @@ _gnu_nonnull(1, 3, 5)
 _sppc_api int sppc_memmem(
   void const *haystack, const size_t haystack_size, void const *needle,
   const size_t needle_size, size_t *_sppc_restrict out) {
+  // An empty needle is found at the start everywhere: Darwin's memmem, an old
+  // FreeBSD one, finds it nowhere.
+  if (needle_size == 0) {
+    *out = 0;
+    return 0;
+  }
   _extract_err(void*) _sppc_memmem(
     haystack, haystack_size, needle, needle_size);
   if (err != NULL) { *out = (size_t)((char*)err - (char*)haystack); }

@@ -12,10 +12,8 @@
 # Ubuntu has none), "arch" its cpu (for msvc, the vcvarsall
 # target: "arm64" on the arm runner, else x64), "qemu" the emulator
 # its tests run under, if they cannot run natively, and
-# "packages" anything else they need to run; "test: false" builds
-# a target the runner cannot run at all (x32: Ubuntu's kernels
-# leave the x32 syscalls out, and qemu-user has none). Every
-# target builds every time, and "required" ones (all of them)
+# "packages" anything else they need to run. Every target builds
+# and runs every test every time, and "required" ones (all of them)
 # fail the build when they fail; a "required: false" one runs
 # with continue-on-error, for a port still in progress. Only a
 # "ready" target uploads, so an unready one is never shipped.
@@ -64,7 +62,6 @@ jobs:
           - { target: mips64el-linux-gnuabi64, os: ubuntu-24.04, compiler: mips64el-linux-gnuabi64-gcc, cross: mips64el-linux-gnuabi64, arch: mips64el, qemu: mips64el, required: true, ready: true, files: libsppc.so }
           - { target: loongarch64-linux-gnu, os: ubuntu-24.04,   compiler: loongarch64-linux-gnu-gcc-14, cross: loongarch64-linux-gnu, toolchain: gcc-14-loongarch64-linux-gnu, arch: loongarch64, qemu: loongarch64, required: true, ready: true, files: libsppc.so }
           - { target: aarch64_be-linux-gnu, os: ubuntu-24.04,    compiler: aarch64_be-none-linux-gnu-gcc, cross: aarch64_be-none-linux-gnu, toolchain: arm-gnu, arch: aarch64_be, qemu: aarch64_be, required: true, ready: true, files: libsppc.so }
-          - { target: x86_64-linux-gnux32, os: ubuntu-24.04,     compiler: x86_64-linux-gnux32-gcc, cross: x86-64-linux-gnux32, arch: x86_64, packages: libc6-x32, test: false, required: true,  ready: true, files: libsppc.so }
           - { target: m68k-linux-gnu,      os: ubuntu-24.04,     compiler: m68k-linux-gnu-gcc, cross: m68k-linux-gnu, arch: m68k, qemu: m68k, required: true, ready: true, files: libsppc.so }
           - { target: sparcv9-linux-gnu,   os: ubuntu-24.04,     compiler: sparc64-linux-gnu-gcc, cross: sparc64-linux-gnu, arch: sparc64, qemu: sparc64, required: true, ready: true, files: libsppc.so }
 
@@ -107,8 +104,16 @@ jobs:
         with:
           python-version: "3.14"
 
+      # msvc builds with Ninja: the Visual Studio generator builds
+      # only whole projects in parallel, each test its own, and pays
+      # MSBuild's startup for every one. From pip, so both Windows
+      # runners get the same one whatever their image carries.
       - name: Install cmake
-        run: pip install "cmake>=4.1"
+        env:
+          COMPILER: ${{ matrix.compiler }}
+        run: |
+          pip install "cmake>=4.1"
+          if [ "$COMPILER" = msvc ]; then pip install ninja; fi
 
       # The target's gcc and, as its recommendation, libc (into
       # /usr/<triple>, where qemu finds the loader), and what its
@@ -142,12 +147,14 @@ jobs:
       # ppc64le unwinds out of a signal handler into a crash, and its mips
       # loses socket timeouts. The fork carries fixes qemu has not shipped
       # (spp's .triages/upstream-watch.md, U17-U19), ppc32's unwinding
-      # through a signal frame among them; spp pins the same release.
+      # through a signal frame among them, and a 32-bit guest's mprotect
+      # and msync of unmapped memory succeeding where Linux gives ENOMEM;
+      # spp pins the same release.
       - name: Install qemu
         if: matrix.qemu
         env:
-          QEMU_TAG: spp-2026.10.26.2
-          QEMU_SHA256: 7ce31b76d67578ad07c5b746d649f412552e12a251c3b832787ce3a2267b41a9
+          QEMU_TAG: spp-2026.11.09.3
+          QEMU_SHA256: 64e805c66d9f64d9d1bedd6dc44b280ee8dc1e5aa7237f606b467a27481705f7
         run: |
           curl -fsSL -o "$RUNNER_TEMP/qemu-user.tar.xz" \
             "https://github.com/SamG101-Developer/qemu/releases/download/${QEMU_TAG}/qemu-user-static-${QEMU_TAG}-x86_64.tar.xz"
@@ -172,8 +179,8 @@ jobs:
           ARCH: ${{ matrix.arch }}
           QEMU: ${{ matrix.qemu }}
         run: |
-          if [ "$COMPILER" != msvc ]; then export CC="$COMPILER"; fi
           flags=()
+          if [ "$COMPILER" = msvc ]; then flags+=(-G Ninja); export CC=cl; else export CC="$COMPILER"; fi
           if [ -n "$CROSS" ]; then
             flags+=(-DCMAKE_SYSTEM_NAME=Linux "-DCMAKE_SYSTEM_PROCESSOR=${ARCH}")
           fi
@@ -184,7 +191,6 @@ jobs:
           cmake --build build --config Release --parallel
 
       - name: Test
-        if: matrix.test != false
         run: ctest --test-dir build --build-config Release --output-on-failure
 
       - name: Collect the binaries
@@ -269,6 +275,118 @@ jobs:
           mkdir -p dist
           cp build/libsppc.so dist/
           if readelf -d dist/libsppc.so | grep -q 'NEEDED.*unwind'; then echo "::error::libsppc.so still needs libunwind"; exit 1; fi
+          ls -l dist
+
+      - name: Upload the binaries
+        if: inputs.upload && matrix.ready
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: sppc-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  # x32, cross-built here and tested in a Debian VM: no x32 binary
+  # runs on the runner, as Ubuntu's kernels leave the x32 syscalls out
+  # and qemu-user has no x32 target. The tests that need the build
+  # host (the compiler) run here, the rest in the VM.
+  build-x32:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        include:
+          - { target: x86_64-linux-gnux32, ready: true }
+    steps:
+      # The toolchain and qemu install with apt, and KVM opens with
+      # udev, so sudo stays.
+      - name: Harden Runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43  # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout sppc
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.14"
+
+      - name: Install cmake
+        run: pip install "cmake>=4.1"
+
+      # The action refreshes apt's lists only when it judges them stale,
+      # and installed from lists the mirror had moved past (a 404 for one
+      # of qemu's dependencies); its install reports that as success.
+      - name: Update the package lists
+        run: sudo apt-get update -q
+
+      - name: Install the toolchain and qemu
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9  # v1.6.3
+        with:
+          packages: gcc-x86-64-linux-gnux32 libc6-dev-x32-cross qemu-system-x86 qemu-utils xorriso
+          version: 1
+
+      # So a failed install, or a cache saved from one, fails here rather
+      # than as a missing compiler later: bump "version" above to drop
+      # such a cache.
+      - name: Check the toolchain and qemu
+        run: |
+          x86_64-linux-gnux32-gcc --version | head -n 1
+          test -f /usr/x86_64-linux-gnux32/lib/crt1.o
+          qemu-system-x86_64 --version | head -n 1
+          qemu-img --version | head -n 1
+          xorriso -version 2>&1 | head -n 1
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Build (Release)
+        run: |
+          export CC=x86_64-linux-gnux32-gcc
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=x86_64
+          cmake --build build --config Release --parallel
+
+      - name: Test on the runner
+        run: ctest --test-dir build --output-on-failure -L host
+
+      # The VM's Debian image, cached by its sha512, the script's pin. It
+      # is saved even when the tests fail; the script removes a bad one.
+      - name: Find the Debian image
+        id: image
+        run: echo "sha512=$(sed -n 's/^DEBIAN_IMAGE_SHA512=//p' tools/x32_vm_test.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the Debian image
+        id: restore-image
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/sppc-x32/debian.qcow2
+          key: x32-debian-${{ steps.image.outputs.sha512 }}
+
+      - name: Test in the VM
+        run: tools/x32_vm_test.sh build ~/.cache/sppc-x32/debian.qcow2
+
+      - name: Save the Debian image
+        if: always() && steps.restore-image.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/sppc-x32/debian.qcow2
+          key: x32-debian-${{ steps.image.outputs.sha512 }}
+
+      - name: Collect the binaries
+        run: |
+          mkdir -p dist
+          cp build/libsppc.so dist/
           ls -l dist
 
       - name: Upload the binaries
