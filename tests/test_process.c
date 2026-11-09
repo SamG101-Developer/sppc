@@ -295,6 +295,9 @@ static void check_endings(void) {
   expect_check(0x13, 0, 0, "check failed: unsigned subtract underflowed");
   expect_check(0x14, 0, 0, "check failed: signed multiply overflowed");
   expect_check(0x15, 0, 0, "check failed: unsigned multiply overflowed");
+  expect_check(0x16, 0, 0, "check failed: division by zero");
+  expect_check(0x17, 0, 0, "check failed: remainder by zero");
+  expect_check(0x18, 0, 0, "check failed: signed divide overflowed");
   expect_check(0x99, 0, 0, "check failed: unknown check 153");
   expect_check(1, UINT64_MAX, 0, "index 18446744073709551615 out of bounds for length 0");
 
