@@ -107,8 +107,16 @@ jobs:
         with:
           python-version: "3.14"
 
+      # msvc builds with Ninja: the Visual Studio generator builds
+      # only whole projects in parallel, each test its own, and pays
+      # MSBuild's startup for every one. From pip, so both Windows
+      # runners get the same one whatever their image carries.
       - name: Install cmake
-        run: pip install "cmake>=4.1"
+        env:
+          COMPILER: ${{ matrix.compiler }}
+        run: |
+          pip install "cmake>=4.1"
+          if [ "$COMPILER" = msvc ]; then pip install ninja; fi
 
       # The target's gcc and, as its recommendation, libc (into
       # /usr/<triple>, where qemu finds the loader), and what its
@@ -172,8 +180,8 @@ jobs:
           ARCH: ${{ matrix.arch }}
           QEMU: ${{ matrix.qemu }}
         run: |
-          if [ "$COMPILER" != msvc ]; then export CC="$COMPILER"; fi
           flags=()
+          if [ "$COMPILER" = msvc ]; then flags+=(-G Ninja); export CC=cl; else export CC="$COMPILER"; fi
           if [ -n "$CROSS" ]; then
             flags+=(-DCMAKE_SYSTEM_NAME=Linux "-DCMAKE_SYSTEM_PROCESSOR=${ARCH}")
           fi
