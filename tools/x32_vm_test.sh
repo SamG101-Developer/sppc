@@ -11,7 +11,9 @@
 #
 # Usage: tools/x32_vm_test.sh <build dir> [debian image]
 # Needs qemu-system-x86_64 with KVM, qemu-img, xorriso and ssh. The
-# image is downloaded when not given.
+# image is downloaded to the path given when nothing is there yet (CI
+# caches it, keyed by DEBIAN_IMAGE_SHA512), or to a temporary file when
+# no path is given; either way its sha512 is checked.
 
 set -euo pipefail
 
@@ -23,10 +25,16 @@ build=$(realpath "$1")
 vm_dir=$(mktemp -d)
 image=${2:-$vm_dir/debian.qcow2}
 
-if [ -z "${2:-}" ]; then
-  curl -fsSL -o "$image" "$DEBIAN_IMAGE"
+if [ ! -f "$image" ]; then
+  mkdir -p "$(dirname "$image")"
+  curl -fsSL -o "$image.part" "$DEBIAN_IMAGE"
+  mv "$image.part" "$image"
 fi
-echo "$DEBIAN_IMAGE_SHA512  $image" | sha512sum -c -
+# A bad image is removed, so a cache never keeps it.
+if ! echo "$DEBIAN_IMAGE_SHA512  $image" | sha512sum -c -; then
+  rm -f "$image"
+  exit 1
+fi
 
 ssh-keygen -q -t ed25519 -N '' -f "$vm_dir/key"
 cat > "$vm_dir/meta-data" <<EOF

@@ -321,15 +321,28 @@ jobs:
       - name: Install cmake
         run: pip install "cmake>=4.1"
 
-      # Plain apt, not the cache action: the runner image's package lists
-      # go stale (a 404 for one of qemu's dependencies), and the action
-      # reports a failed install as success, leaving nothing installed.
+      # The action refreshes apt's lists only when it judges them stale,
+      # and installed from lists the mirror had moved past (a 404 for one
+      # of qemu's dependencies); its install reports that as success.
+      - name: Update the package lists
+        run: sudo apt-get update -q
+
       - name: Install the toolchain and qemu
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9  # v1.6.3
+        with:
+          packages: gcc-x86-64-linux-gnux32 libc6-dev-x32-cross qemu-system-x86 qemu-utils xorriso
+          version: 1
+
+      # So a failed install, or a cache saved from one, fails here rather
+      # than as a missing compiler later: bump "version" above to drop
+      # such a cache.
+      - name: Check the toolchain and qemu
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends \
-            gcc-x86-64-linux-gnux32 libc6-dev-x32-cross qemu-system-x86 qemu-utils xorriso
           x86_64-linux-gnux32-gcc --version | head -n 1
+          test -f /usr/x86_64-linux-gnux32/lib/crt1.o
+          qemu-system-x86_64 --version | head -n 1
+          qemu-img --version | head -n 1
+          xorriso -version 2>&1 | head -n 1
 
       - name: Enable KVM
         run: |
@@ -347,8 +360,28 @@ jobs:
       - name: Test on the runner
         run: ctest --test-dir build --output-on-failure -L host
 
+      # The VM's Debian image, cached by its sha512, the script's pin. It
+      # is saved even when the tests fail; the script removes a bad one.
+      - name: Find the Debian image
+        id: image
+        run: echo "sha512=$(sed -n 's/^DEBIAN_IMAGE_SHA512=//p' tools/x32_vm_test.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the Debian image
+        id: restore-image
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/sppc-x32/debian.qcow2
+          key: x32-debian-${{ steps.image.outputs.sha512 }}
+
       - name: Test in the VM
-        run: tools/x32_vm_test.sh build
+        run: tools/x32_vm_test.sh build ~/.cache/sppc-x32/debian.qcow2
+
+      - name: Save the Debian image
+        if: always() && steps.restore-image.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/sppc-x32/debian.qcow2
+          key: x32-debian-${{ steps.image.outputs.sha512 }}
 
       - name: Collect the binaries
         run: |
