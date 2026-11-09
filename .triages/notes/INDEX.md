@@ -6,7 +6,8 @@ Paths are relative to this folder. Read a note before relying on its one-line su
 - [qemu ppc32 vdso CFA bug](ci/qemu-ppc32-vdso-sigframe-cfa.md) — rt sigtramp CFA 16 bytes low; fault backtraces stop at the vdso
 - [qemu from our fork](ci/qemu-from-spp-fork.md) — CI pins a static release of SamG101-Developer/qemu (fixes U17-U19), same as spp
 - [Arm toolchain for aarch64_be](ci/arm-gnu-toolchain-aarch64-be.md) — Ubuntu has none; pinned gitlab.arm.com tarball, qemu -L its sysroot
-- [x32 tested locally only](ci/x32-tested-locally-only.md) — ships untested by CI; run its ctest natively before merging arch changes
+- [x32 tested in a Debian VM](ci/x32-tested-in-debian-vm.md) — cross-built, ctest in a KVM Debian VM booted syscall.x32=y (generic image: -cloud kernel has no x32); tools/x32_vm_test.sh
+- [GHA null == false](ci/gha-null-equals-false.md) — unset matrix key is null, equal to false; `!= false` skipped ctest on every target from #15 to 2026-11-09
 - [Static libunwind for musl](ci/libunwind-static-for-musl.md) — CI builds pinned PIC libunwind, linked into libsppc.so; needs only musl
 - [FreeBSD VM for local testing](ci/freebsd-vm-local-testing.md) — cloud-init VM image under KVM, ssh in, build natively; ktrace for hangs
 - [Windows tests from WSL](ci/windows-native-from-wsl.md) — mingw .exe runs natively via interop; msvc through a vcvars64 .bat under cmd.exe; arm64 cross-builds only
