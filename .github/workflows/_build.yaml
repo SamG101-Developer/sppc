@@ -328,7 +328,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends \
-            gcc-x86-64-linux-gnux32 libc6-x32 qemu-system-x86 qemu-utils xorriso
+            gcc-x86-64-linux-gnux32 libc6-dev-x32-cross qemu-system-x86 qemu-utils xorriso
           x86_64-linux-gnux32-gcc --version | head -n 1
 
       - name: Enable KVM

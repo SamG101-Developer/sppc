@@ -166,6 +166,7 @@ if (SPPC_BUILD_TESTS)
       if (MSVC)
         target_compile_options(${name} PRIVATE /experimental:c11atomics)
         target_compile_options(${name} PRIVATE /Z7)
+        target_compile_options(${name} PRIVATE /Ob0)
         target_link_options(${name} PRIVATE /DEBUG)
       endif ()
       add_test(
