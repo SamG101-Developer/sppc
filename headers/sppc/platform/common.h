@@ -326,6 +326,9 @@ enum {
   SPPC_CHECK_UNSIGNED_SUB = 0x13,
   SPPC_CHECK_SIGNED_MUL = 0x14,
   SPPC_CHECK_UNSIGNED_MUL = 0x15,
+  SPPC_CHECK_DIVIDE_BY_ZERO = 0x16,
+  SPPC_CHECK_REMAINDER_BY_ZERO = 0x17,
+  SPPC_CHECK_SIGNED_DIV = 0x18, // the minimum divided by -1; its remainder is 0, not a check
 };
 
 /// The one path a failed runtime check ends the process through: a fixed
@@ -390,6 +393,15 @@ _sppc_api void sppc_check_failed(
       break;
     case SPPC_CHECK_UNSIGNED_MUL:
       _sppc_bt_put("unsigned multiply overflowed");
+      break;
+    case SPPC_CHECK_DIVIDE_BY_ZERO:
+      _sppc_bt_put("division by zero");
+      break;
+    case SPPC_CHECK_REMAINDER_BY_ZERO:
+      _sppc_bt_put("remainder by zero");
+      break;
+    case SPPC_CHECK_SIGNED_DIV:
+      _sppc_bt_put("signed divide overflowed");
       break;
     default:
       _sppc_bt_put("unknown check ");
