@@ -193,8 +193,13 @@ static void faults(void) {
   *nowhere = 1;
 }
 
+// The C library's abort, not sppc's; called as the others are, since msvc
+// makes a direct abort() a tail jump on arm64, leaving no frame to report.
+static void (*volatile c_abort_fn)(void) = abort;
+
 static void raises_abort(void) {
-  abort();
+  c_abort_fn();
+  after_call = 1;
 }
 
 #if SPPC_PLATFORM_WINDOWS

@@ -147,12 +147,14 @@ jobs:
       # ppc64le unwinds out of a signal handler into a crash, and its mips
       # loses socket timeouts. The fork carries fixes qemu has not shipped
       # (spp's .triages/upstream-watch.md, U17-U19), ppc32's unwinding
-      # through a signal frame among them; spp pins the same release.
+      # through a signal frame among them, and a 32-bit guest's mprotect
+      # and msync of unmapped memory succeeding where Linux gives ENOMEM;
+      # spp pins the same release.
       - name: Install qemu
         if: matrix.qemu
         env:
-          QEMU_TAG: spp-2026.10.26.2
-          QEMU_SHA256: 7ce31b76d67578ad07c5b746d649f412552e12a251c3b832787ce3a2267b41a9
+          QEMU_TAG: spp-2026.11.09.3
+          QEMU_SHA256: 64e805c66d9f64d9d1bedd6dc44b280ee8dc1e5aa7237f606b467a27481705f7
         run: |
           curl -fsSL -o "$RUNNER_TEMP/qemu-user.tar.xz" \
             "https://github.com/SamG101-Developer/qemu/releases/download/${QEMU_TAG}/qemu-user-static-${QEMU_TAG}-x86_64.tar.xz"
@@ -319,11 +321,15 @@ jobs:
       - name: Install cmake
         run: pip install "cmake>=4.1"
 
+      # Plain apt, not the cache action: the runner image's package lists
+      # go stale (a 404 for one of qemu's dependencies), and the action
+      # reports a failed install as success, leaving nothing installed.
       - name: Install the toolchain and qemu
-        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9  # v1.6.3
-        with:
-          packages: gcc-x86-64-linux-gnux32 libc6-x32 qemu-system-x86 qemu-utils xorriso
-          version: 1
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends \
+            gcc-x86-64-linux-gnux32 libc6-x32 qemu-system-x86 qemu-utils xorriso
+          x86_64-linux-gnux32-gcc --version | head -n 1
 
       - name: Enable KVM
         run: |
