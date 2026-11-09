@@ -188,9 +188,7 @@ extern void* sppc_aligned_alloc(size_t size, size_t alignment);
 extern void* sppc_calloc(size_t num, size_t size);
 extern void* sppc_realloc(void *ptr, size_t new_size);
 extern void sppc_free(void *ptr);
-extern int sppc_memcpy(void *_sppc_restrict dest, void const *_sppc_restrict src, size_t size, size_t dest_index, size_t src_index);
 extern int sppc_memmove(void *dest, void const *src, size_t size);
-extern int sppc_memset(void *_sppc_restrict dest, int value, size_t size, size_t dest_index);
 extern int sppc_memcmp(void const *ptr1, void const *ptr2, size_t size, int *_sppc_restrict out);
 extern int sppc_memmem(void const *haystack, size_t haystack_size, void const *needle, size_t needle_size, size_t *_sppc_restrict out);
 #if SPPC_PLATFORM_WINDOWS

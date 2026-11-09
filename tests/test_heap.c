@@ -183,12 +183,6 @@ static void check_too_big(void) {
 static void check_bytes(void) {
   char buf[16];
 
-  // memcpy and memset take an offset into each buffer.
-  memset(buf, '.', sizeof buf);
-  CHECK(sppc_memcpy(buf, "0123456789", 3, 2, 5) == 0 && memcmp(buf, "..567...", 8) == 0);
-  CHECK(sppc_memset(buf, 'x', 2, 6) == 0 && memcmp(buf, "..567.xx.", 9) == 0);
-  CHECK(sppc_memcpy(buf, "abc", 0, 0, 0) == 0 && buf[0] == '.'); // nothing to copy
-
   // memmove: overlapping either way.
   memcpy(buf, "abcdefgh", 8);
   CHECK(sppc_memmove(buf + 2, buf, 5) == 0 && memcmp(buf, "ababcdeh", 8) == 0);
