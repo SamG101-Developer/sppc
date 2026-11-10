@@ -525,7 +525,7 @@ class Generator:
         decl = canon.get_declaration()
         size, align = canon.get_size(), canon.get_align()
         if size < 0:
-            return f"# Opaque: \"{c_name}\" is incomplete, so only usable behind a pointer.\n!public\ncls {spp_name} {{ }}"
+            return f"# Opaque: \"{c_name}\" is incomplete, so only usable behind a pointer.\n!public\n!ffi\ncls {spp_name} {{ }}"
 
         reason = None
         fields: list[str] = []
@@ -563,13 +563,13 @@ class Generator:
             unit = min(align, 8)
             count = size // unit
             primitive = f"U{unit * 8}"
-            return (f"!public\ncls {spp_name} {{\n"
+            return (f"!public\n!ffi\ncls {spp_name} {{\n"
                     f"  # Opaque stand-in for C's \"{c_name}\" ({reason}):\n"
                     f"  # {size} bytes, {align}-byte aligned.\n"
                     f"  !private bytes: [{primitive}; {count}_uz] = [0_{primitive.lower()}; {count}_uz]\n}}")
 
         body = "\n".join(fields)
-        return f"!public\ncls {spp_name} {{\n{body}\n}}" if body else f"!public\ncls {spp_name} {{ }}"
+        return f"!public\n!ffi\ncls {spp_name} {{\n{body}\n}}" if body else f"!public\n!ffi\ncls {spp_name} {{ }}"
 
     def _closure(self, canon: cl.Type, c_name: str) -> str:
         """A {fn, env} pair whose fn takes the env first: CClosure[(rest,), ret]."""
