@@ -23,6 +23,12 @@ past a prologue leaves the return address unsigned where the unwind tables say i
 authenticates what it reads, so it faulted again inside the handler. qemu-user `-cpu max` has BTI and FPAC and keeps
 `BTYPE` in the signal frame, so all of it is tested under it.
 
+CI checks the property on both AArch64 ELF targets (`_build.yaml`, "Check the branch protection property") and, when
+it is missing, relinks with `-z force-bti`, whose warnings name each input that lacks it, and **warns** (the library
+is then unguarded, as spp leaves `bti` out of a program on such a toolchain). Both runners lack it today (2026-11-11):
+`ubuntu-24.04-arm`'s glibc `crti.o`/`crtn.o`, and the Arm toolchain's `crtbeginS.o`/`crtendS.o` and two `libgcc.a`
+members (`swp_1_4.o`, `lse-init.o`). The code still has its pads and signatures; only the loader's guard is missing.
+
 **Why:** a library without the property is left unguarded, silently; the same happens to any new `.S` without the note.
 **How to apply:** a new AArch64 `.S` gets `bti c`/`bti j` where it can be branched to, signs any return address it
 saves, and the property note. Cross-build and test with `CC=aarch64-linux-gnu-gcc cmake -S . -B <dir>
