@@ -193,18 +193,19 @@ jobs:
       # AArch64 ELF builds with landing pads and signed return addresses
       # (CMakeLists.txt), but the loader guards the library only if the link
       # kept the GNU property, which the linker drops silently when any input
-      # lacks it. On failure the link is redone, output thrown away, with
-      # "-z force-bti", whose warnings name each input without the property.
+      # lacks it: the toolchain's own start files do on some (Ubuntu 24.04's
+      # crti.o and crtn.o; Arm's crtbeginS.o, crtendS.o and libgcc.a). That
+      # leaves the library unguarded, as the compiler leaves "bti" out for a
+      # program, so it is a warning: the link is redone, output thrown away,
+      # with "-z force-bti", whose warnings name each input without it.
       - name: Check the branch protection property
         if: startsWith(matrix.target, 'aarch64') && endsWith(matrix.target, '-linux-gnu')
         run: |
           lib=$(find build -name libsppc.so -type f | head -n 1)
           if readelf -n "$lib" | grep -E 'AArch64 feature: .*BTI.*PAC'; then exit 0; fi
-          echo "::error::$lib has no BTI and PAC property; the link inputs without it:"
-          cd build
-          sh -c "$(head -n 1 CMakeFiles/sppc.dir/link.txt) -Wl,-z,force-bti -o $RUNNER_TEMP/force-bti.so" 2>&1 \
-            | grep -i 'bti' || echo "(none named)"
-          exit 1
+          inputs=$(cd build && sh -c "$(head -n 1 CMakeFiles/sppc.dir/link.txt) -Wl,-z,force-bti -o $RUNNER_TEMP/force-bti.so" 2>&1 \
+            | grep -i 'bti' | sed -E 's/^[^ ]*ld: //; s/: warning:.*//' | xargs -r -n 1 basename | paste -sd ' ' -)
+          echo "::warning::$lib is not guarded (no BTI and PAC property); link inputs without it: ${inputs:-none named}"
 
       - name: Test
         run: ctest --test-dir build --build-config Release --output-on-failure
