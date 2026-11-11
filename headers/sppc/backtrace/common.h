@@ -9,6 +9,9 @@
 ///
 ///   _sppc_bt_frames       the return addresses on the stack
 ///   _sppc_bt_resolve      a pc's function and object
+///
+/// A frame's source lines come from a table the program carries, the same on
+/// every platform (SOURCE LINES).
 
 #include <sppc/config.h>
 #include <sppc/macros.h>
@@ -40,7 +43,7 @@ extern char _sppc_bt_buf[_SPPC_BT_BUF_SIZE];
 extern size_t _sppc_bt_len;
 
 _gnu_cold
-inline void _sppc_bt_put_n(char const *s, size_t n) {
+inline void _sppc_bt_put_n(char const *s, const size_t n) {
   const size_t room = sizeof _sppc_bt_buf - _sppc_bt_len;
   const size_t take = n < room ? n : room;
   memcpy(_sppc_bt_buf + _sppc_bt_len, s, take);
@@ -116,6 +119,157 @@ inline void _sppc_bt_put_dec(uint64_t v) {
   }
   while (v != 0);
   _sppc_bt_put(buf + i);
+}
+
+// ==================== SOURCE LINES ====================
+
+// The program's source lines: a table the compiler builds from its debug info
+// and links into the program ("[binary.debug] info" in spp), handed over by
+// "sppc_set_source_lines" before the program starts. A frame is looked up by
+// its function's symbol name, as "_sppc_bt_resolve" gives it, and its offset
+// into it, so nothing in the table is an address and nothing relocates it.
+//
+// Version 1. Every field is in the target's byte order, and the table is
+// 8-byte aligned. The compiler writes it (spp's "spp.codegen.llvm_lines"), so
+// a change here is a new version there too.
+//   header     the magic, the version, and the count of each array below
+//   functions  one per function: the 64-bit FNV-1a hash of its symbol name,
+//              and its ranges; sorted by hash
+//   ranges     each function's, sorted by offset: where in it a range starts,
+//              and the innermost frame of the code there, or none; a range
+//              runs to the next, the last to the function's end
+//   frames     a place in the source: its function's name, its file, line and
+//              column, and the frame it was inlined into, or none; a chain
+//              ends at the function the code is in
+//   strings    NUL-terminated; names and files are offsets into them
+
+#define _SPPC_LINES_MAGIC 0x4c505053u // "SPPL", read little-endian
+#define _SPPC_LINES_VERSION 1u
+#define _SPPC_LINES_NONE 0xffffffffu
+
+// A chain longer than any inlining is a table gone wrong, not a deep one.
+#define _SPPC_LINES_MAX_DEPTH 64
+
+typedef struct {
+  uint32_t magic;
+  uint32_t version;
+  uint32_t n_functions;
+  uint32_t n_ranges;
+  uint32_t n_frames;
+  uint32_t strings_size;
+} _sppc_lines_header;
+
+typedef struct {
+  uint64_t hash;
+  uint32_t first_range;
+  uint32_t n_ranges;
+} _sppc_lines_function;
+
+typedef struct {
+  uint32_t offset;
+  uint32_t frame;
+} _sppc_lines_range;
+
+typedef struct {
+  uint32_t name;
+  uint32_t file;
+  uint32_t line;
+  uint32_t column;
+  uint32_t inlined_into;
+} _sppc_lines_frame;
+
+// Set once, before the program's own code runs ("sppc_set_source_lines").
+extern void const *_sppc_bt_lines;
+
+/// The 64-bit FNV-1a hash of a symbol name, as the compiler keys the table.
+_gnu_cold
+inline uint64_t _sppc_bt_lines_hash(char const *name) {
+  uint64_t h = 0xcbf29ce484222325ull;
+  for (; *name != '\0'; ++name) {
+    h ^= (uint8_t)*name;
+    h *= 0x100000001b3ull;
+  }
+  return h;
+}
+
+/// Put the table's string at "at", stopping at its NUL or at the end of the
+/// strings, whichever comes first.
+_gnu_cold
+inline void _sppc_bt_put_lines_string(
+  char const *strings, const uint32_t size, const uint32_t at) {
+  uint32_t end = at;
+  while (end < size && strings[end] != '\0') { ++end; }
+  _sppc_bt_put_n(strings + at, (size_t)(end - at));
+}
+
+/// Print where in the source "offset" into the function named "name" is: a
+/// line per frame, innermost first, down to the function's own. Nothing for a
+/// function the table does not have, or with no table, or one of a version
+/// this runtime does not read. Every index is checked before it is followed:
+/// this runs in a crash, and must not make another.
+_gnu_cold
+inline void _sppc_bt_put_lines(char const *name, const uintptr_t offset) {
+  _sppc_lines_header const *const h = (_sppc_lines_header const*)_sppc_bt_lines;
+  if (h == NULL || h->magic != _SPPC_LINES_MAGIC || h->version != _SPPC_LINES_VERSION) { return; }
+  _sppc_lines_function const *const functions = (_sppc_lines_function const*)(h + 1);
+  _sppc_lines_range const *const ranges = (_sppc_lines_range const*)(functions + h->n_functions);
+  _sppc_lines_frame const *const frames = (_sppc_lines_frame const*)(ranges + h->n_ranges);
+  char const *const strings = (char const*)(frames + h->n_frames);
+
+  // The function, by its name's hash.
+  const uint64_t hash = _sppc_bt_lines_hash(name);
+  uint32_t lo = 0, hi = h->n_functions;
+  while (lo < hi) {
+    const uint32_t mid = lo + (hi - lo) / 2;
+    if (functions[mid].hash < hash) { lo = mid + 1; }
+    else { hi = mid; }
+  }
+  if (lo == h->n_functions || functions[lo].hash != hash) { return; }
+  _sppc_lines_function const *const fn = &functions[lo];
+  if (fn->first_range > h->n_ranges || fn->n_ranges > h->n_ranges - fn->first_range) { return; }
+
+  // The last range starting at or before the offset.
+  _sppc_lines_range const *const own = ranges + fn->first_range;
+  uint32_t r_lo = 0, r_hi = fn->n_ranges;
+  while (r_lo < r_hi) {
+    const uint32_t mid = r_lo + (r_hi - r_lo) / 2;
+    if (own[mid].offset <= offset) { r_lo = mid + 1; }
+    else { r_hi = mid; }
+  }
+  if (r_lo == 0) { return; }
+
+  // The frames, innermost first. An inlined one names the function it is in,
+  // which has no frame of its own on the stack; the last is the function the
+  // frame's line above already named.
+  uint32_t at = own[r_lo - 1].frame;
+  for (int depth = 0; at < h->n_frames && depth < _SPPC_LINES_MAX_DEPTH; ++depth) {
+    _sppc_lines_frame const *const f = &frames[at];
+    if (f->file >= h->strings_size) { return; }
+    _sppc_bt_put("          at ");
+    _sppc_bt_put_lines_string(strings, h->strings_size, f->file);
+    _sppc_bt_put(":");
+    _sppc_bt_put_dec(f->line);
+    if (f->column != 0) {
+      _sppc_bt_put(":");
+      _sppc_bt_put_dec(f->column);
+    }
+    if (f->inlined_into != _SPPC_LINES_NONE && f->name < h->strings_size) {
+      _sppc_bt_put("  (inlined ");
+      _sppc_bt_put_lines_string(strings, h->strings_size, f->name);
+      _sppc_bt_put(")");
+    }
+    _sppc_bt_put("\n");
+    at = f->inlined_into;
+  }
+}
+
+/// Hand the runtime the program's source-line table (above), from which its
+/// crash reports name each frame's file and line. The compiler's C entry
+/// point calls it first, when the program has one. NULL, or a table of a
+/// version this runtime does not read, leaves reports without lines.
+_gnu_inline
+_sppc_api void sppc_set_source_lines(void const *table) {
+  _sppc_bt_lines = table;
 }
 
 // ==================== BACKTRACE ====================
@@ -214,6 +368,7 @@ inline void _sppc_bt_print(void const *uctx, void const *first_pc, const bool wa
       _sppc_bt_put(")");
     }
     _sppc_bt_put("\n");
+    if (name != NULL) { _sppc_bt_put_lines(name, lookup - sym_start); }
   }
 }
 

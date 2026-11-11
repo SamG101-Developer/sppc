@@ -179,6 +179,49 @@ _gnu_noinline void sppc_test_fails_check_here(void) {
   after_call = 1;
 }
 
+// A source-line table as the compiler writes one (SOURCE LINES in
+// backtrace/common.h): all of "sppc_test_fails_check_here" at one place, a
+// line of "lib.spp" inlined into one of "src/caller.spp". Built by hand, so
+// a change to the format breaks this before it breaks a program.
+static struct {
+  uint32_t header[6];
+  uint64_t hash;
+  uint32_t function[2];
+  uint32_t range[2];
+  uint32_t frames[2][5];
+  char strings[40];
+} test_lines;
+
+static void fill_test_lines(const uint32_t version) {
+  static char const strings[] = "lib.spp\0src/caller.spp\0inner\0outer";
+  memcpy(test_lines.strings, strings, sizeof strings);
+  const uint32_t header[6] = {0x4c505053u, version, 1, 1, 2, (uint32_t)sizeof strings};
+  memcpy(test_lines.header, header, sizeof header);
+
+  // FNV-1a, 64 bits, over the symbol's name.
+  uint64_t h = 0xcbf29ce484222325ull;
+  for (char const *c = "sppc_test_fails_check_here"; *c != '\0'; ++c) { h = (h ^ (uint8_t)*c) * 0x100000001b3ull; }
+  test_lines.hash = h;
+  test_lines.function[0] = 0; // its first range
+  test_lines.function[1] = 1; // and how many
+  test_lines.range[0] = 0; // from its start
+  test_lines.range[1] = 0; // the innermost frame
+  const uint32_t frames[2][5] = {{23, 0, 3, 5, 1}, {29, 8, 7, 0, 0xffffffffu}};
+  memcpy(test_lines.frames, frames, sizeof frames);
+}
+
+static void fails_a_check_with_lines(void) {
+  fill_test_lines(1);
+  sppc_set_source_lines(&test_lines);
+  sppc_test_fails_check_here();
+}
+
+static void fails_a_check_with_unknown_lines(void) {
+  fill_test_lines(2);
+  sppc_set_source_lines(&test_lines);
+  sppc_test_fails_check_here();
+}
+
 // Which check fails, and with what, cross to the child in its environment:
 // a forked child would see globals, but Windows' child is the test run anew.
 static void fails_a_check(void) {
@@ -289,6 +332,14 @@ static void check_endings(void) {
   CHECK(check_dies(sppc_test_fails_check_here, err, sizeof err) == 134);
   CHECK(strstr(err, "check failed: index 5 out of bounds for length 3") != NULL);
   CHECK(strstr(err, "#0  sppc_test_fails_check_here+") != NULL);
+
+  // With the program's source lines, each frame names its place, inlined
+  // ones first; a table of another version is not read.
+  CHECK(check_dies(fails_a_check_with_lines, err, sizeof err) == 134);
+  CHECK(strstr(err, "#0  sppc_test_fails_check_here+") != NULL);
+  CHECK(strstr(err, "\n          at lib.spp:3:5  (inlined inner)\n          at src/caller.spp:7\n") != NULL);
+  CHECK(check_dies(fails_a_check_with_unknown_lines, err, sizeof err) == 134);
+  CHECK(strstr(err, "#0  sppc_test_fails_check_here+") != NULL && strstr(err, "  at ") == NULL);
 
   expect_check(2, 0, 0, "check failed: integer conversion");
   expect_check(3, 0, 0, "check failed: generator 'send'");

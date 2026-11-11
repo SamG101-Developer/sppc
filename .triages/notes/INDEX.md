@@ -21,3 +21,4 @@ Paths are relative to this folder. Read a note before relying on its one-line su
 - [FreeBSD loopback is deferred](tests/freebsd-loopback-delivery-deferred.md) — written TCP data reaches the peer later; poll the receiver alone before multi-fd or zero-timeout checks
 - [msvc arm64 noreturn tail jump](tests/msvc-arm64-noreturn-tail-jump.md) — direct abort() becomes `b abort`, no frame; crash tests call through a volatile pointer then store after_call
 - [Branch protection](runtime/branch-protection.md) — AArch64 ELF built -mbranch-protection=bti+pac-ret; switch_aapcs64.S needs its own bti c + property note; BTI/PAC faults reported as CFI failures, no stack walk
+- [Source lines from a table](runtime/source-lines-table.md) — spp links a line table in, main hands it over (sppc_set_source_lines); format in backtrace/common.h; no DWARF parsing here
