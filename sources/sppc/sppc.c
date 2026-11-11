@@ -114,6 +114,13 @@ extern void _sppc_bt_put_hex(uintptr_t v);
 extern void _sppc_bt_put_dec(uint64_t v);
 extern void _sppc_bt_fail_begin(void);
 extern void _sppc_bt_fail_end(void const *caller_pc);
+
+// The program's source lines, when it carries them.
+void const *_sppc_bt_lines = NULL;
+extern uint64_t _sppc_bt_lines_hash(char const *name);
+extern void _sppc_bt_put_lines_string(char const *strings, uint32_t size, uint32_t at);
+extern void _sppc_bt_put_lines(char const *name, uintptr_t offset);
+extern void sppc_set_source_lines(void const *table);
 extern void _sppc_bt_altstack_up(void);
 extern void _sppc_bt_altstack_down(void);
 
