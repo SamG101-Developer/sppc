@@ -141,6 +141,21 @@ inline bool _sppc_bt_is_cfi_trap(void const *pc) {
   return false;
 }
 
+/// Mach-O on AArch64 does not enforce landing pads (BTI), so no fault is one.
+_gnu_cold
+inline bool _sppc_bt_is_bti_fault(void const *uctx) {
+  (void)uctx;
+  return false;
+}
+
+/// Return addresses are not signed by the programs sppc runs on Mach-O, so no
+/// fault is a failed authentication.
+_gnu_cold
+inline bool _sppc_bt_is_pac_fault(void const *pc) {
+  (void)pc;
+  return false;
+}
+
 /// Nothing to load ahead of time: the symbol tables are already mapped, and
 /// the walk below calls nothing that allocates.
 _gnu_cold

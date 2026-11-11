@@ -134,13 +134,17 @@ inline char const* _sppc_bt_resolve(void const *lookup_pc, uintptr_t *out_start,
 /// signal's ucontext, a Windows exception's CONTEXT), and NULL for a failure
 /// reported by call.
 _gnu_cold
-inline void _sppc_bt_print(void const *uctx, void const *first_pc) {
+inline void _sppc_bt_print(void const *uctx, void const *first_pc, const bool walk) {
   // What the report says so far goes out first: the walk below is the one
   // part of it that can itself fault (an unwinder misreading a signal frame,
-  // say), and a report cut off there still says what happened.
+  // say), and a report cut off there still says what happened. A stack whose
+  // control flow is known to have gone wrong (a BTI fault, a failed return
+  // address authentication) is not walked at all ("walk" false): an unwinder
+  // that authenticates what it reads (libgcc on AArch64) would fault on it
+  // again; only the frame that failed is reported.
   _sppc_bt_flush();
   void *frames[_SPPC_BT_MAX_FRAMES];
-  const size_t n = _sppc_bt_frames(frames, _SPPC_BT_MAX_FRAMES, uctx);
+  const size_t n = walk ? _sppc_bt_frames(frames, _SPPC_BT_MAX_FRAMES, uctx) : (size_t)0;
   const bool first_is_fault = uctx != NULL;
 
   // Start at "first_pc", dropping the reporter's own frames above it: for a
@@ -241,7 +245,7 @@ inline void _sppc_bt_fail_begin(void) {
 /// from a failure, and nothing is allocated or unwound.
 _gnu_cold _gnu_noreturn
 inline void _sppc_bt_fail_end(void const *caller_pc) {
-  if (_sppc_bt_enabled) { _sppc_bt_print(NULL, caller_pc); }
+  if (_sppc_bt_enabled) { _sppc_bt_print(NULL, caller_pc, true); }
   else { _sppc_bt_put(_sppc_bt_off_note); }
   _sppc_bt_flush();
   _exit(_SPPC_FAIL_STATUS);

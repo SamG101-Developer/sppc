@@ -51,6 +51,17 @@ if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     sppc_objects PUBLIC $<$<COMPILE_LANGUAGE:C>:-fasynchronous-unwind-tables>)
 endif ()
 
+# Landing pads on every function an indirect branch may reach (BTI), and every
+# return address signed before it is saved and authenticated before it is used
+# (pac-ret), as a program the compiler builds with "bti" and "pac_ret" is; the
+# context switch says so too ("__ARM_FEATURE_BTI_DEFAULT", "..._PAC_DEFAULT").
+# Only compilers targeting AArch64 accept the flag; Mach-O does not enforce it.
+include(CheckCCompilerFlag)
+check_c_compiler_flag(-mbranch-protection=bti+pac-ret SPPC_HAS_BRANCH_PROTECTION)
+if (SPPC_HAS_BRANCH_PROTECTION AND NOT APPLE)
+  target_compile_options(sppc_objects PUBLIC -mbranch-protection=bti+pac-ret)
+endif ()
+
 # Only what the code marks "_sppc_api" / "_sppc_export" leaves
 # the library; everything else, the context switch included,
 # is hidden where it is defined. msvc exports nothing that is

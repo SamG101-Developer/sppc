@@ -186,6 +186,42 @@ inline bool _sppc_bt_is_cfi_trap(void const *pc) {
   return false;
 }
 
+/// Whether a SIGILL's context is a branch-target fault (BTI): an indirect
+/// branch reached an instruction that is not a landing pad in guarded code.
+/// The processor keeps the branch's type for it ("BTYPE", bits 10 and 11 of
+/// the saved processor state); no other illegal instruction is taken with one
+/// set, as any instruction completing clears it. AArch64 only.
+_gnu_cold
+inline bool _sppc_bt_is_bti_fault(void const *uctx) {
+#if SPPC_ARCH_ARM64 && SPPC_KERNEL_FREEBSD
+  return ((((ucontext_t const*)uctx)->uc_mcontext.mc_gpregs.gp_spsr >> 10) & 3U) != 0;
+#elif SPPC_ARCH_ARM64
+  return ((((ucontext_t const*)uctx)->uc_mcontext.pstate >> 10) & 3U) != 0;
+#else
+  (void)uctx;
+  return false;
+#endif
+}
+
+/// Whether a SIGILL at "pc" is a return address failing authentication
+/// (pac-ret): with FEAT_FPAC the authenticating instruction itself faults
+/// ("autiasp", "autibsp", "retaa" or "retab"). Without it the address only
+/// comes back poisoned, and the return to it faults as any wild jump does, so
+/// that is reported as the SIGSEGV it is. AArch64 only. Instructions are
+/// always little-endian, whatever the data's order.
+_gnu_cold
+inline bool _sppc_bt_is_pac_fault(void const *pc) {
+#if SPPC_ARCH_ARM64
+  unsigned char b[4];
+  memcpy(b, pc, sizeof b);
+  const uint32_t insn = (uint32_t)b[0] | (uint32_t)b[1] << 8 | (uint32_t)b[2] << 16 | (uint32_t)b[3] << 24;
+  return insn == 0xd50323bfU || insn == 0xd50323ffU || insn == 0xd65f0bffU || insn == 0xd65f0fffU;
+#else
+  (void)pc;
+  return false;
+#endif
+}
+
 /// Where a function symbol's code starts, as a link-time address. On ELFv1
 /// (big-endian ppc64) the symbol is a descriptor in ".opd" instead, whose
 /// first word is the code's run-time address; every function has one, so the
