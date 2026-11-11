@@ -394,14 +394,30 @@ inline void _sppc_bt_fail_begin(void) {
   }
 }
 
+// Counted by "sppc_debug_fatal", whose body it is: a function with no body of
+// its own could be folded into another empty one (msvc's /OPT:ICF), and a
+// breakpoint on it would then stop in both.
+extern volatile uint32_t _sppc_bt_fatal_stops;
+
+/// Where a debugger breaks to stop on a failure that ends the process by call
+/// (a failed check, "sppc_abort"). Called once the report is written, just
+/// before "_exit", with the failing code's frames still on the stack. A signal
+/// needs none: a debugger stops on it before the handler runs.
+_gnu_noinline _gnu_cold
+inline _sppc_api void sppc_debug_fatal(void) {
+  _sppc_bt_fatal_stops = _sppc_bt_fatal_stops + 1;
+}
+
 /// Add a backtrace from "caller_pc", the return address into the code that
-/// failed, write the report, and end the process with "_exit": no handler,
-/// "atexit" function or stream flush runs, so none can be reached as a gadget
-/// from a failure, and nothing is allocated or unwound.
+/// failed, write the report, stop in "sppc_debug_fatal" for a debugger, and
+/// end the process with "_exit": no handler, "atexit" function or stream flush
+/// runs, so none can be reached as a gadget from a failure, and nothing is
+/// allocated or unwound.
 _gnu_cold _gnu_noreturn
 inline void _sppc_bt_fail_end(void const *caller_pc) {
   if (_sppc_bt_enabled) { _sppc_bt_print(NULL, caller_pc, true); }
   else { _sppc_bt_put(_sppc_bt_off_note); }
   _sppc_bt_flush();
+  sppc_debug_fatal();
   _exit(_SPPC_FAIL_STATUS);
 }

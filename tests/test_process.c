@@ -333,6 +333,11 @@ static void check_endings(void) {
   CHECK(strstr(err, "check failed: index 5 out of bounds for length 3") != NULL);
   CHECK(strstr(err, "#0  sppc_test_fails_check_here+") != NULL);
 
+  // Where a debugger stops on a failure: exported, and returns, so the
+  // failure goes on to end the process (that it is called there is checked
+  // under gdb by hand: "break sppc_debug_fatal").
+  sppc_debug_fatal();
+
   // With the program's source lines, each frame names its place, inlined
   // ones first; a table of another version is not read.
   CHECK(check_dies(fails_a_check_with_lines, err, sizeof err) == 134);
