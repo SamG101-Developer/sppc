@@ -23,6 +23,11 @@ past a prologue leaves the return address unsigned where the unwind tables say i
 authenticates what it reads, so it faulted again inside the handler. qemu-user `-cpu max` has BTI and FPAC and keeps
 `BTYPE` in the signal frame, so all of it is tested under it.
 
+CI checks the property on both AArch64 ELF targets (`_build.yaml`, "Check the branch protection property") and, when
+it is missing, relinks with `-z force-bti`, whose warnings name each input that lacks it. Added 2026-11-11 after the
+first release from `ubuntu-24.04-arm` shipped without it although the code had its pads and signatures: one of that
+runner's own link inputs lacks the property.
+
 **Why:** a library without the property is left unguarded, silently; the same happens to any new `.S` without the note.
 **How to apply:** a new AArch64 `.S` gets `bti c`/`bti j` where it can be branched to, signs any return address it
 saves, and the property note. Cross-build and test with `CC=aarch64-linux-gnu-gcc cmake -S . -B <dir>
