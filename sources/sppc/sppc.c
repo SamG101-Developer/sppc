@@ -119,7 +119,7 @@ extern void _sppc_bt_altstack_down(void);
 
 extern char const* _sppc_bt_resolve(void const *lookup_pc, uintptr_t *out_start, char const **out_object);
 extern size_t _sppc_bt_frames(void **frames, size_t max, void const *uctx);
-extern void _sppc_bt_print(void const *uctx, void const *first_pc);
+extern void _sppc_bt_print(void const *uctx, void const *first_pc, bool walk);
 extern void _sppc_bt_install(void);
 
 #if SPPC_PLATFORM_WINDOWS
@@ -173,11 +173,13 @@ extern uintptr_t _sppc_bt_strip(uintptr_t addr);
 extern bool _sppc_bt_read_frame(uintptr_t fp, uintptr_t out[2]);
 #endif
 extern bool _sppc_bt_is_cfi_trap(void const *pc);
+extern bool _sppc_bt_is_bti_fault(void const *uctx);
+extern bool _sppc_bt_is_pac_fault(void const *pc);
 extern bool _sppc_bt_secure(void);
 extern void _sppc_bt_prepare(void);
 extern void const* _sppc_bt_context_pc(void const *uctx);
 extern void _sppc_bt_handler(int sig, siginfo_t *info, void *uctx);
-extern void _sppc_bt_cfi_failed(void const *uctx, void const *pc);
+extern void _sppc_bt_cfi_failed(void const *uctx, void const *pc, char const *what, bool walk);
 
 #endif
 

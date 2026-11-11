@@ -10,6 +10,8 @@
 ///   _sppc_bt_prepare      anything to do once, before a handler can run
 ///   _sppc_bt_context_pc   the faulting pc in a signal's context
 ///   _sppc_bt_is_cfi_trap  whether a pc is a control-flow-integrity check's trap
+///   _sppc_bt_is_bti_fault whether a signal is a branch to no landing pad (BTI)
+///   _sppc_bt_is_pac_fault whether a SIGILL is a return address failing authentication
 
 #include <sppc/backtrace/common.h>
 #include <signal.h>
@@ -40,7 +42,7 @@ inline char const* _sppc_bt_signal_name(const int sig) {
 // ==================== HANDLER ====================
 
 _gnu_cold _gnu_noreturn
-inline void _sppc_bt_cfi_failed(void const *uctx, void const *pc);
+inline void _sppc_bt_cfi_failed(void const *uctx, void const *pc, char const *what, bool walk);
 
 _gnu_cold
 inline void _sppc_bt_handler(const int sig, siginfo_t *info, void *uctx) {
@@ -52,10 +54,26 @@ inline void _sppc_bt_handler(const int sig, siginfo_t *info, void *uctx) {
   }
 
   // A failed control-flow-integrity check (KCFI) traps on an instruction the
-  // compiler recorded (SIGILL on x86, SIGTRAP on AArch64). It is reported as
-  // the check it is, not as the signal it arrives as.
+  // compiler recorded (SIGILL on x86, SIGTRAP on AArch64), an indirect branch
+  // to anywhere but a landing pad in guarded code faults (BTI, SIGILL), and a
+  // corrupted return address fails authentication (pac-ret, SIGILL with FPAC;
+  // without it, the return to the poisoned address is reported as its SIGSEGV).
+  // Each is reported as the check it is, not as the signal it arrives as.
   void const *const pc = _sppc_bt_context_pc(uctx);
-  if ((sig == SIGILL || sig == SIGTRAP) && _sppc_bt_is_cfi_trap(pc)) { _sppc_bt_cfi_failed(uctx, pc); }
+  if ((sig == SIGILL || sig == SIGTRAP) && _sppc_bt_is_cfi_trap(pc)) {
+    _sppc_bt_cfi_failed(uctx, pc, "an indirect call reached a function of another type", true);
+  }
+  // A BTI fault or a failed authentication means control flow has already
+  // gone wrong where it was caught: a branch past a function's prologue leaves
+  // its return address unsigned where the unwind tables say it is signed, and
+  // an unwinder that authenticates what it reads (libgcc on AArch64) would
+  // fault again inside this handler. Only the frame that failed is reported.
+  if (sig == SIGILL && _sppc_bt_is_bti_fault(uctx)) {
+    _sppc_bt_cfi_failed(uctx, pc, "an indirect branch reached an instruction that is not a landing pad", false);
+  }
+  if (sig == SIGILL && _sppc_bt_is_pac_fault(pc)) {
+    _sppc_bt_cfi_failed(uctx, pc, "a return address failed authentication", false);
+  }
 
   _sppc_bt_put("\n[sppc] fatal signal: ");
   _sppc_bt_put(_sppc_bt_signal_name(sig));
@@ -64,7 +82,7 @@ inline void _sppc_bt_handler(const int sig, siginfo_t *info, void *uctx) {
     _sppc_bt_put_hex((uintptr_t)info->si_addr);
   }
   _sppc_bt_put("\n");
-  if (_sppc_bt_enabled) { _sppc_bt_print(uctx, pc); }
+  if (_sppc_bt_enabled) { _sppc_bt_print(uctx, pc, true); }
   else { _sppc_bt_put(_sppc_bt_off_note); }
   _sppc_bt_flush();
 
@@ -78,14 +96,18 @@ inline void _sppc_bt_handler(const int sig, siginfo_t *info, void *uctx) {
 // ==================== FAILURE ====================
 
 /// Report a failed control-flow-integrity check, from the handler of the
-/// signal its trap raised: the same report and end as a failed runtime check
-/// ("sppc_check_failed"), with the backtrace from the call that failed. Which
-/// types were expected and found is left out, as nothing in it helps the
-/// program's author and all of it helps whoever corrupted the pointer.
+/// signal its trap or fault raised: the same report and end as a failed
+/// runtime check ("sppc_check_failed"), with the backtrace from where it
+/// failed, and "what" failed. Which types or addresses were expected and found
+/// is left out, as nothing in it helps the program's author and all of it
+/// helps whoever corrupted the pointer. "walk" is false when the stack holds
+/// the corrupted return address itself, which is then not unwound through.
 _gnu_cold _gnu_noreturn
-inline void _sppc_bt_cfi_failed(void const *uctx, void const *pc) {
-  _sppc_bt_put("\n[sppc] check failed: control-flow integrity: an indirect call reached a function of another type\n");
-  if (_sppc_bt_enabled) { _sppc_bt_print(uctx, pc); }
+inline void _sppc_bt_cfi_failed(void const *uctx, void const *pc, char const *what, const bool walk) {
+  _sppc_bt_put("\n[sppc] check failed: control-flow integrity: ");
+  _sppc_bt_put(what);
+  _sppc_bt_put("\n");
+  if (_sppc_bt_enabled) { _sppc_bt_print(uctx, pc, walk); }
   else { _sppc_bt_put(_sppc_bt_off_note); }
   _sppc_bt_flush();
   _exit(_SPPC_FAIL_STATUS);

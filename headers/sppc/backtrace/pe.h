@@ -338,7 +338,7 @@ inline void _sppc_bt_win_report(EXCEPTION_POINTERS const *info) {
 #else
   void const *const pc = (void const*)(uintptr_t)info->ContextRecord->Pc;
 #endif
-  if (_sppc_bt_enabled) { _sppc_bt_print(info->ContextRecord, pc); }
+  if (_sppc_bt_enabled) { _sppc_bt_print(info->ContextRecord, pc, true); }
   else { _sppc_bt_put(_sppc_bt_off_note); }
   _sppc_bt_flush();
 }
@@ -389,7 +389,7 @@ inline void __cdecl _sppc_bt_win_on_abort(int sig) {
     for (;;) { Sleep(INFINITE); }
   }
   _sppc_bt_put("\n[sppc] fatal signal: SIGABRT (aborted)\n");
-  if (_sppc_bt_enabled) { _sppc_bt_print(NULL, _sppc_return_address()); }
+  if (_sppc_bt_enabled) { _sppc_bt_print(NULL, _sppc_return_address(), true); }
   else { _sppc_bt_put(_sppc_bt_off_note); }
   _sppc_bt_flush();
 }
