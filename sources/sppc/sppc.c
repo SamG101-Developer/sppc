@@ -121,6 +121,10 @@ extern uint64_t _sppc_bt_lines_hash(char const *name);
 extern void _sppc_bt_put_lines_string(char const *strings, uint32_t size, uint32_t at);
 extern void _sppc_bt_put_lines(char const *name, uintptr_t offset);
 extern void sppc_set_source_lines(void const *table);
+
+// Where a debugger stops on a failure (backtrace/common.h).
+volatile uint32_t _sppc_bt_fatal_stops = 0;
+extern void sppc_debug_fatal(void);
 extern void _sppc_bt_altstack_up(void);
 extern void _sppc_bt_altstack_down(void);
 
