@@ -405,9 +405,18 @@ extern void sppc_abort(void);
 extern void sppc_check_failed(uint32_t check, uint64_t a, uint64_t b);
 extern int sppc_signal(int32_t pid, int signal);
 extern int sppc_getenv(char const *_sppc_restrict key, char *_sppc_restrict out, size_t size);
+extern int sppc_getenv_len(char const *_sppc_restrict key, size_t *_sppc_restrict out_len);
 extern int sppc_setenv(char const *_sppc_restrict key, char const *_sppc_restrict val, bool overwrite);
 extern int sppc_unsetenv(char const *_sppc_restrict key);
 extern int sppc_getrandom(size_t size, char *_sppc_restrict out);
+
+// The program's arguments, kept by "sppc_set_args" (platform/common.h).
+size_t _sppc_nargs = 0;
+char const *const *_sppc_args = NULL;
+extern void sppc_set_args(int argc, char **argv);
+extern size_t sppc_arg_count(void);
+extern int sppc_arg_len(size_t i, size_t *_sppc_restrict out_len);
+extern int sppc_arg(size_t i, char *_sppc_restrict out, size_t size);
 
 // ==================== STRINGS ====================
 

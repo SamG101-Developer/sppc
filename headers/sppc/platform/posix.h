@@ -1562,6 +1562,27 @@ _sppc_api int sppc_getenv(char const *_sppc_restrict key, char *_sppc_restrict o
   return 0;
 }
 
+/// The length in bytes of a variable's value, without its terminator, so a
+/// buffer for "sppc_getenv" can be sized to fit. ENOENT for one not set.
+_gnu_inline _gnu_restrict_access(read_only, 1)
+_gnu_restrict_access(write_only, 2) _gnu_nonnull(1, 2)
+_sppc_api int sppc_getenv_len(
+  char const *_sppc_restrict key, size_t *_sppc_restrict out_len) {
+  char const *const value = _sppc_secure_getenv(key);
+  if (value == NULL) { return SPPC_ENOENT; }
+  *out_len = strlen(value);
+  return 0;
+}
+
+/// Keep the program's arguments, as "main" was given them, for
+/// "sppc_arg_count" and "sppc_arg". The compiler's C entry point calls it
+/// first; the strings are the process's own, there for its whole life.
+_gnu_inline
+_sppc_api void sppc_set_args(const int argc, char **argv) {
+  _sppc_nargs = argc > 0 && argv != NULL ? (size_t)argc : 0;
+  _sppc_args = (char const *const*)argv;
+}
+
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)
 _sppc_api int sppc_setenv(char const *_sppc_restrict key, char const *_sppc_restrict val, const bool overwrite) {
   _extract_err(int) setenv(key, val, overwrite ? 1 : 0);

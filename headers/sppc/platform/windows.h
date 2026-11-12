@@ -4805,16 +4805,13 @@ int _sppc_win_env_name(char const *key, wchar_t **out) {
   return err == SPPC_EILSEQ ? SPPC_EINVAL : err;
 }
 
-/// The environment is Windows' own, in UTF-16, read and written with its
-/// "W" calls and crossing as UTF-8: the C library's copy is in the ANSI code
-/// page, and would garble anything else. So the C library's "getenv" does
-/// not see what "sppc_setenv" sets; a child process will, once sppc starts
-/// them. ENOENT for a variable that is not set; ERANGE when its value and
-/// terminator do not fit (either way "out" is emptied).
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2, 3) _gnu_nonnull(1, 2)
-_sppc_api int sppc_getenv(char const *_sppc_restrict key, char *_sppc_restrict out, const size_t size) {
-  if (size == 0) { return SPPC_ERANGE; }
-  *out = '\0';
+/// A variable's value as UTF-8, in memory the caller frees ("*out", NULL on
+/// an error). The environment is Windows' own, in UTF-16, read with its "W"
+/// calls: the C library's copy is in the ANSI code page, and would garble
+/// anything else. ENOENT for a variable that is not set.
+_gnu_inline _gnu_nonnull(1, 2)
+int _sppc_win_getenv_utf8(char const *key, char **out) {
+  *out = NULL;
   wchar_t *name;
   const int bad = _sppc_win_env_name(key, &name);
   if (bad != 0) { return bad == SPPC_EINVAL ? SPPC_ENOENT : bad; }
@@ -4825,21 +4822,187 @@ _sppc_api int sppc_getenv(char const *_sppc_restrict key, char *_sppc_restrict o
   if (need == 0) {
     // An empty value is a variable that is set; only a missing one says so.
     err = GetLastError() == ERROR_ENVVAR_NOT_FOUND ? SPPC_ENOENT : 0;
+    if (err == 0) {
+      *out = (char*)calloc(1, 1);
+      if (*out == NULL) { err = SPPC_ENOMEM; }
+    }
   } else if (value == NULL) {
     err = SPPC_ENOMEM;
   } else {
     GetEnvironmentVariableW(name, value, need);
     const int bytes = WideCharToMultiByte(CP_UTF8, 0, value, -1, NULL, 0, NULL, NULL);
-    if (bytes <= 0 || (size_t)bytes > size) { err = bytes <= 0 ? SPPC_EILSEQ : SPPC_ERANGE; }
-    else { WideCharToMultiByte(CP_UTF8, 0, value, -1, out, bytes, NULL, NULL); }
+    *out = bytes > 0 ? (char*)malloc((size_t)bytes) : NULL;
+    if (bytes <= 0) { err = SPPC_EILSEQ; }
+    else if (*out == NULL) { err = SPPC_ENOMEM; }
+    else { WideCharToMultiByte(CP_UTF8, 0, value, -1, *out, bytes, NULL, NULL); }
   }
   free(value);
   free(name);
   return err;
 }
 
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)
-_sppc_api int sppc_setenv(char const *_sppc_restrict key, char const *_sppc_restrict val, const bool overwrite) {
+/// The variable's value, crossing as UTF-8 (above). So the C library's
+/// "getenv" does not see what "sppc_setenv" sets; a child process will, once
+/// sppc starts them. ENOENT for a variable that is not set; ERANGE when its
+/// value and terminator do not fit (either way "out" is emptied).
+_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2, 3) _gnu_nonnull(1, 2)
+_sppc_api int sppc_getenv(char const *_sppc_restrict key, char *_sppc_restrict out, const size_t size) {
+  if (size == 0) { return SPPC_ERANGE; }
+  *out = '\0';
+  char *value;
+  int err = _sppc_win_getenv_utf8(key, &value);
+  if (err == 0) {
+    const size_t len = strlen(value);
+    if (len >= size) { err = SPPC_ERANGE; }
+    else { memcpy(out, value, len + 1); }
+  }
+  free(value);
+  return err;
+}
+
+/// The length in bytes of a variable's value as UTF-8, without its
+/// terminator, so a buffer for "sppc_getenv" can be sized to fit. ENOENT for
+/// one not set.
+_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2) _gnu_nonnull(1, 2)
+_sppc_api int sppc_getenv_len(char const *_sppc_restrict key, size_t *_sppc_restrict out_len) {
+  char *value;
+  const int err = _sppc_win_getenv_utf8(key, &value);
+  if (err == 0) { *out_len = strlen(value); }
+  free(value);
+  return err;
+}
+
+/// Split a command line into arguments as the C runtime does (Microsoft's
+/// "Parsing C command-line arguments"), each written to "out" (if not NULL)
+/// with its terminator; returns how many there are, and their total length in
+/// wide characters, terminators included, in "*out_chars". The program's name
+/// comes first and is read whole: to the next quote if it starts with one,
+/// else to the first space or tab. After it, spaces and tabs separate
+/// arguments outside quotes; a quote starts or ends a quoted part, and "" in
+/// one is a literal quote; 2n backslashes before a quote are n backslashes,
+/// and 2n + 1 are n and a literal quote; other backslashes are themselves.
+/// "shell32"'s "CommandLineToArgvW" does much the same, but loading it would
+/// load the shell's libraries into every program for this alone.
+_gnu_inline
+size_t _sppc_win_split_args(wchar_t const *cmd, wchar_t *out, size_t *out_chars) {
+  size_t n = 0, chars = 0;
+  wchar_t const *p = cmd;
+
+  // The program's name.
+  if (*p == L'"') {
+    for (++p; *p != L'\0' && *p != L'"'; ++p) {
+      if (out != NULL) { out[chars] = *p; }
+      ++chars;
+    }
+    if (*p == L'"') { ++p; }
+  } else {
+    for (; *p != L'\0' && *p != L' ' && *p != L'\t'; ++p) {
+      if (out != NULL) { out[chars] = *p; }
+      ++chars;
+    }
+  }
+  if (out != NULL) { out[chars] = L'\0'; }
+  ++chars;
+  ++n;
+
+  // The rest.
+  for (;;) {
+    while (*p == L' ' || *p == L'\t') { ++p; }
+    if (*p == L'\0') { break; }
+    bool quoted = false;
+    for (;;) {
+      if (*p == L'\\') {
+        size_t slashes = 0;
+        while (*p == L'\\') {
+          ++slashes;
+          ++p;
+        }
+        const size_t kept = *p == L'"' ? slashes / 2 : slashes;
+        for (size_t i = 0; i < kept; ++i) {
+          if (out != NULL) { out[chars] = L'\\'; }
+          ++chars;
+        }
+        if (*p == L'"' && slashes % 2 == 1) {
+          if (out != NULL) { out[chars] = L'"'; }
+          ++chars;
+          ++p;
+        }
+        continue;
+      }
+      if (*p == L'"') {
+        if (quoted && p[1] == L'"') {
+          if (out != NULL) { out[chars] = L'"'; }
+          ++chars;
+          p += 2;
+          continue;
+        }
+        quoted = !quoted;
+        ++p;
+        continue;
+      }
+      if (*p == L'\0' || (!quoted && (*p == L' ' || *p == L'\t'))) { break; }
+      if (out != NULL) { out[chars] = *p; }
+      ++chars;
+      ++p;
+    }
+    if (out != NULL) { out[chars] = L'\0'; }
+    ++chars;
+    ++n;
+  }
+  *out_chars = chars;
+  return n;
+}
+
+/// Keep the program's arguments, for "sppc_arg_count" and "sppc_arg". Not
+/// the "argv" the C runtime passed "main": that is in the ANSI code page, and
+/// would garble any other character. They are split again from the command
+/// line, in UTF-16 ("_sppc_win_split_args"), and kept as UTF-8, in one block
+/// that lives as long as the process. Should that fail (no memory, or a
+/// command line that is not UTF-16), the given "argv" is kept.
+_gnu_inline
+_sppc_api void sppc_set_args(const int argc, char **argv) {
+  _sppc_nargs = argc > 0 && argv != NULL ? (size_t)argc : 0;
+  _sppc_args = (char const *const*)argv;
+
+  wchar_t const *const cmd = GetCommandLineW();
+  size_t chars = 0;
+  const size_t n = _sppc_win_split_args(cmd, NULL, &chars);
+  wchar_t *const wide = (wchar_t*)malloc(chars * sizeof *wide);
+  if (wide == NULL) { return; }
+  _sppc_win_split_args(cmd, wide, &chars);
+
+  // One block: the table of pointers, then each argument's bytes.
+  size_t bytes = n * sizeof(char*);
+  wchar_t const *w = wide;
+  for (size_t i = 0; i < n; ++i) {
+    const int len = WideCharToMultiByte(CP_UTF8, 0, w, -1, NULL, 0, NULL, NULL);
+    if (len <= 0) {
+      free(wide);
+      return;
+    }
+    bytes += (size_t)len;
+    w += wcslen(w) + 1;
+  }
+  char **const table = (char**)malloc(bytes);
+  if (table != NULL) {
+    char *at = (char*)(table + n);
+    w = wide;
+    for (size_t i = 0; i < n; ++i) {
+      table[i] = at;
+      at += WideCharToMultiByte(CP_UTF8, 0, w, -1, at, (int)(bytes - (size_t)(at - (char*)table)), NULL, NULL);
+      w += wcslen(w) + 1;
+    }
+    _sppc_nargs = n;
+    _sppc_args = (char const *const*)table;
+  }
+  free(wide);
+}
+
+_gnu_inline _gnu_restrict_access(read_only, 1)
+_gnu_restrict_access(read_only, 2) _gnu_nonnull(1, 2)
+_sppc_api int sppc_setenv(
+  char const *_sppc_restrict key, char const *_sppc_restrict val,
+  const bool overwrite) {
   wchar_t *name, *value;
   int err = _sppc_win_env_name(key, &name);
   if (err != 0) { return err; }

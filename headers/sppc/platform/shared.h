@@ -261,3 +261,11 @@ bool _sppc_is_temp_template(char const *path) {
   const size_t len = strlen(path);
   return len >= 6 && memcmp(path + len - 6, "XXXXXX", 6) == 0;
 }
+
+// ==================== ARGUMENTS ====================
+
+// The program's arguments: kept by each platform's "sppc_set_args", set once
+// before any of the program's own code runs, and only read after (the getters
+// are platform/common.h's).
+extern size_t _sppc_nargs;
+extern char const *const *_sppc_args;
