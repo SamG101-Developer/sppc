@@ -9,8 +9,10 @@
 
 static void check_environment(void) {
   char buf[64];
+  size_t len = 99;
   CHECK(sppc_unsetenv("SPPC_TEST_VAR") == 0);
   CHECK(sppc_getenv("SPPC_TEST_VAR", buf, sizeof buf) == SPPC_ENOENT && buf[0] == '\0');
+  CHECK(sppc_getenv_len("SPPC_TEST_VAR", &len) == SPPC_ENOENT && len == 99);
 
   CHECK(sppc_setenv("SPPC_TEST_VAR", "first", false) == 0);
   CHECK(sppc_getenv("SPPC_TEST_VAR", buf, sizeof buf) == 0 && strcmp(buf, "first") == 0);
@@ -20,7 +22,9 @@ static void check_environment(void) {
   CHECK(sppc_setenv("SPPC_TEST_VAR", "second", true) == 0);
   CHECK(sppc_getenv("SPPC_TEST_VAR", buf, sizeof buf) == 0 && strcmp(buf, "second") == 0);
 
-  // The value and its terminator must fit; if not, nothing is written.
+  // The value and its terminator must fit; if not, nothing is written. Its
+  // length, without the terminator, says how much room that is.
+  CHECK(sppc_getenv_len("SPPC_TEST_VAR", &len) == 0 && len == 6);
   CHECK(sppc_getenv("SPPC_TEST_VAR", buf, 7) == 0);
   CHECK(sppc_getenv("SPPC_TEST_VAR", buf, 6) == SPPC_ERANGE && buf[0] == '\0');
   CHECK(sppc_getenv("SPPC_TEST_VAR", buf, 0) == SPPC_ERANGE);
@@ -28,6 +32,16 @@ static void check_environment(void) {
   // An empty value is still a value.
   CHECK(sppc_setenv("SPPC_TEST_VAR", "", true) == 0);
   CHECK(sppc_getenv("SPPC_TEST_VAR", buf, sizeof buf) == 0 && buf[0] == '\0');
+  CHECK(sppc_getenv_len("SPPC_TEST_VAR", &len) == 0 && len == 0);
+
+  // A value longer than any fixed buffer a caller might guess at.
+  char long_value[2048];
+  memset(long_value, 'v', sizeof long_value - 1);
+  long_value[sizeof long_value - 1] = '\0';
+  char long_buf[sizeof long_value];
+  CHECK(sppc_setenv("SPPC_TEST_VAR", long_value, true) == 0);
+  CHECK(sppc_getenv_len("SPPC_TEST_VAR", &len) == 0 && len == sizeof long_value - 1);
+  CHECK(sppc_getenv("SPPC_TEST_VAR", long_buf, len + 1) == 0 && strcmp(long_buf, long_value) == 0);
 
   CHECK(sppc_unsetenv("SPPC_TEST_VAR") == 0);
   CHECK(sppc_getenv("SPPC_TEST_VAR", buf, sizeof buf) == SPPC_ENOENT);
@@ -37,6 +51,77 @@ static void check_environment(void) {
   CHECK(sppc_setenv("", "x", true) == SPPC_EINVAL);
   CHECK(sppc_setenv("A=B", "x", true) == SPPC_EINVAL);
   CHECK(sppc_unsetenv("A=B") == SPPC_EINVAL);
+}
+
+// ==================== ARGUMENTS ====================
+
+#if SPPC_PLATFORM_WINDOWS
+// A command line split as the C runtime would, its arguments joined by "|".
+static bool splits_to(wchar_t const *cmd, wchar_t const *expected) {
+  size_t chars = 0;
+  const size_t n = _sppc_win_split_args(cmd, NULL, &chars);
+  wchar_t out[256], joined[256];
+  if (chars > 256) { return false; }
+  _sppc_win_split_args(cmd, out, &chars);
+  size_t at = 0;
+  wchar_t const *w = out;
+  for (size_t i = 0; i < n; ++i) {
+    if (i > 0) { joined[at++] = L'|'; }
+    for (; *w != L'\0'; ++w) { joined[at++] = *w; }
+    ++w;
+  }
+  joined[at] = L'\0';
+  return wcscmp(joined, expected) == 0;
+}
+#endif
+
+static void check_arguments(void) {
+  char buf[4096];
+  size_t len = 0;
+#if !SPPC_PLATFORM_WINDOWS
+  // As "main" was given them, kept as they are.
+  char a0[] = "prog", a1[] = "one", a2[] = "two words";
+  char *args[] = {a0, a1, a2, NULL};
+  sppc_set_args(3, args);
+  CHECK(sppc_arg_count() == 3);
+  CHECK(sppc_arg_len(2, &len) == 0 && len == 9);
+  CHECK(sppc_arg(2, buf, sizeof buf) == 0 && strcmp(buf, "two words") == 0);
+  CHECK(sppc_arg(0, buf, sizeof buf) == 0 && strcmp(buf, "prog") == 0);
+
+  // The argument and its terminator must fit; if not, nothing is written.
+  CHECK(sppc_arg(2, buf, 10) == 0);
+  CHECK(sppc_arg(2, buf, 9) == SPPC_ERANGE && buf[0] == '\0');
+  CHECK(sppc_arg(2, buf, 0) == SPPC_ERANGE);
+
+  // Past the last: refused, and nothing written.
+  CHECK(sppc_arg(3, buf, sizeof buf) == SPPC_EINVAL && buf[0] == '\0');
+  CHECK(sppc_arg_len(3, &len) == SPPC_EINVAL);
+
+  // None at all.
+  sppc_set_args(0, NULL);
+  CHECK(sppc_arg_count() == 0 && sppc_arg(0, buf, sizeof buf) == SPPC_EINVAL);
+#else
+  // Read again from the process's own command line, whatever "argv" says:
+  // the test's own name comes first.
+  char a0[] = "ignored";
+  char *args[] = {a0, NULL};
+  sppc_set_args(1, args);
+  CHECK(sppc_arg_count() >= 1);
+  CHECK(sppc_arg(0, buf, sizeof buf) == 0 && strstr(buf, "test_process") != NULL);
+  CHECK(sppc_arg_len(0, &len) == 0 && len == strlen(buf));
+  CHECK(sppc_arg(sppc_arg_count(), buf, sizeof buf) == SPPC_EINVAL);
+
+  // Split as the C runtime splits a command line: Microsoft's examples, then
+  // the program's name, read whole, and an empty argument.
+  CHECK(splits_to(L"p \"a b c\" d e", L"p|a b c|d|e"));
+  CHECK(splits_to(L"p \"ab\\\"c\" \"\\\\\" d", L"p|ab\"c|\\|d"));
+  CHECK(splits_to(L"p a\\\\\\b d\"e f\"g h", L"p|a\\\\\\b|de fg|h"));
+  CHECK(splits_to(L"p a\\\\\\\"b c d", L"p|a\\\"b|c|d"));
+  CHECK(splits_to(L"p a\\\\\\\\\"b c\" d e", L"p|a\\\\b c|d|e"));
+  CHECK(splits_to(L"p a\"b\"\" c d", L"p|ab\" c d"));
+  CHECK(splits_to(L"\"C:\\a dir\\p.exe\" x", L"C:\\a dir\\p.exe|x"));
+  CHECK(splits_to(L"C:\\p\\q.exe\t \"\" y  ", L"C:\\p\\q.exe||y"));
+#endif
 }
 
 // ==================== IDS AND RANDOMNESS ====================
@@ -436,6 +521,7 @@ int main(void) {
   if (sppc_init() != 0) { return 1; }
   check_child();
   check_environment();
+  check_arguments();
   check_ids();
   check_random();
   check_streams();

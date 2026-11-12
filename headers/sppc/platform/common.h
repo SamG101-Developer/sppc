@@ -389,6 +389,39 @@ _sppc_api void sppc_check_failed(
   _sppc_bt_fail_end(_sppc_return_address());
 }
 
+// ==================== ARGUMENTS ====================
+
+// The program's arguments are kept by each platform's "sppc_set_args", in
+// "_sppc_nargs" and "_sppc_args" (platform/shared.h).
+
+/// How many arguments the program was started with, its own name first.
+_gnu_inline
+_sppc_api size_t sppc_arg_count(void) {
+  return _sppc_nargs;
+}
+
+/// The length of argument "i" in bytes, without its terminator, so a buffer
+/// for "sppc_arg" can be sized to fit. EINVAL for an "i" past the last.
+_gnu_inline _gnu_restrict_access(write_only, 2) _gnu_nonnull(2)
+_sppc_api int sppc_arg_len(const size_t i, size_t *_sppc_restrict out_len) {
+  if (i >= _sppc_nargs) { return SPPC_EINVAL; }
+  *out_len = strlen(_sppc_args[i]);
+  return 0;
+}
+
+/// Argument "i", with its terminator, into "out". EINVAL for an "i" past the
+/// last; ERANGE when it does not fit (either way "out" is emptied).
+_gnu_inline _gnu_restrict_access(write_only, 2, 3) _gnu_nonnull(2)
+_sppc_api int sppc_arg(const size_t i, char *_sppc_restrict out, const size_t size) {
+  if (size == 0) { return SPPC_ERANGE; }
+  *out = '\0';
+  if (i >= _sppc_nargs) { return SPPC_EINVAL; }
+  const size_t len = strlen(_sppc_args[i]);
+  if (len >= size) { return SPPC_ERANGE; }
+  memcpy(out, _sppc_args[i], len + 1);
+  return 0;
+}
+
 // ==================== THREADING ====================
 
 extern bool _unsafe_stack_wanted;

@@ -23,3 +23,4 @@ Paths are relative to this folder. Read a note before relying on its one-line su
 - [Branch protection](runtime/branch-protection.md) — AArch64 ELF built -mbranch-protection=bti+pac-ret; switch_aapcs64.S needs its own bti c + property note; BTI/PAC faults reported as CFI failures, no stack walk
 - [Source lines from a table](runtime/source-lines-table.md) — spp links a line table in, main hands it over (sppc_set_source_lines); format in backtrace/common.h; no DWARF parsing here
 - [Debugger stop on failure](runtime/debugger-stop-on-failure.md) — sppc_debug_fatal, called before _exit on check failures/abort; tools break on it (like rust_panic); never rename
+- [Program arguments](runtime/program-arguments.md) — sppc_set_args from spp's C main; Windows splits GetCommandLineW itself into UTF-8 (CRT argv is ANSI); no shell32
