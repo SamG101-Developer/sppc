@@ -49,3 +49,14 @@ void _sppc_closure_discard(const sppc_closure closure) {
   if (env->drop_captures != NULL) { env->drop_captures(env); }
   if (env->owns) { _sppc_env_free(env); }
 }
+
+/// Release a closure's environment after the closure has run (which
+/// consumed its captures): free the storage only if the environment
+/// owns it. A closure that captured nothing it can carry away (only
+/// borrows) keeps its environment on a stack, and freeing that aborts.
+_gnu_inline
+void _sppc_closure_release_env(void *const closure_env) {
+  sppc_closure_env *const env = (sppc_closure_env*)closure_env;
+  if (env == NULL) { return; }
+  if (env->owns) { _sppc_env_free(env); }
+}

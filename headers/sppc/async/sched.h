@@ -264,7 +264,7 @@ void _gt_task_run(void) {
   if (_sppc_unlikely(_gt_R.zombies != NULL)) { _gt_reap(); }
 
   self->body.fn(self->body.env);
-  _sppc_env_free(self->body.env);
+  _sppc_closure_release_env(self->body.env);
   self->body.env = NULL;
   self->state = GT_STATE_DONE;
 
@@ -750,7 +750,7 @@ inline void _gt_teardown(void) {
     gt_task *const t = _gt_R.slots[i];
     if (t->stack && t->stack != live_stack) { _gt_task_stack_unmap(t->stack, t->stack_size); }
     if (t->ustack) { _gt_stack_unmap(t->ustack, t->ustack_size); }
-    if (t->state != GT_STATE_FREE && t->state != GT_STATE_DONE) { _sppc_env_free(t->body.env); }
+    if (t->state != GT_STATE_FREE && t->state != GT_STATE_DONE) { _sppc_closure_release_env(t->body.env); }
     free(t);
   }
   free(_gt_R.slots);

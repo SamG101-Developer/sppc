@@ -451,7 +451,7 @@ void* _sppc_thread_entry(void *closure) {
   _sppc_bt_altstack_up();
 
   call.fn(call.env);
-  _sppc_env_free(call.env);
+  _sppc_closure_release_env(call.env);
 
   // As at process exit: a task spawned on this thread and never awaited still
   // runs to completion, rather than being abandoned with the thread. The
@@ -585,14 +585,14 @@ void _sppc_once_entry(void) {
   call.fn(call.env);
 }
 
-_gnu_inline _gnu_restrict_access(read_only, 1) _gnu_nonnull(1)
+_gnu_inline _gnu_nonnull(1)
 _sppc_api int sppc_pthread_once(
   uint64_t const *_sppc_restrict once, const sppc_closure func) {
   _sppc_once_closure = func;
   _sppc_once_ran = 0;
   _extract_err(int) _sppc_pthread_once(
     (_sppc_once_t*)once, _sppc_once_entry);
-  if (_sppc_once_ran) { _sppc_env_free(func.env); }
+  if (_sppc_once_ran) { _sppc_closure_release_env(func.env); }
   else { _sppc_closure_discard(func); }
   _return_normalized_pthread_err
 }
