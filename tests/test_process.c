@@ -51,6 +51,19 @@ static void check_environment(void) {
   CHECK(sppc_setenv("", "x", true) == SPPC_EINVAL);
   CHECK(sppc_setenv("A=B", "x", true) == SPPC_EINVAL);
   CHECK(sppc_unsetenv("A=B") == SPPC_EINVAL);
+
+#if SPPC_PLATFORM_WINDOWS
+  // A value with a lone surrogate, which Windows allows, reads back as WTF-8
+  // (ED B0 80 for U+DC00) and sets back the same UTF-16: as UTF-8 it was
+  // U+FFFD, and setting that back changed the value.
+  CHECK(SetEnvironmentVariableW(L"SPPC_TEST_VAR", L"a\xDC00z"));
+  CHECK(sppc_getenv_len("SPPC_TEST_VAR", &len) == 0 && len == 5);
+  CHECK(sppc_getenv("SPPC_TEST_VAR", buf, sizeof buf) == 0 && strcmp(buf, "a\xED\xB0\x80z") == 0);
+  CHECK(sppc_setenv("SPPC_TEST_VAR", "b\xED\xB0\x80y", true) == 0);
+  wchar_t wide[8];
+  CHECK(GetEnvironmentVariableW(L"SPPC_TEST_VAR", wide, 8) == 3 && wcscmp(wide, L"b\xDC00y") == 0);
+  CHECK(sppc_unsetenv("SPPC_TEST_VAR") == 0);
+#endif
 }
 
 // ==================== ARGUMENTS ====================

@@ -2378,34 +2378,133 @@ _sppc_api int sppc_pipe(int *_sppc_restrict out_read_fd, int *_sppc_restrict out
 
 // Paths are Windows' own, as the S++ stdlib's Path has them there: a drive
 // ("C:\"), a UNC share or a relative path, with either separator, which
-// Windows takes both of. They cross as UTF-8 and are UTF-16 to Windows (its
-// "W" calls); a path sppc hands back (getcwd, realpath, readlink) is in
+// Windows takes both of. They cross as WTF-8 (below) and are UTF-16 to Windows
+// (its "W" calls); a path sppc hands back (getcwd, realpath, readlink) is in
 // Windows' own form, with backslashes.
+
+// WTF-8 is UTF-8 that also carries a lone surrogate, as the three bytes its
+// code point would take (ED A0..BF xx). Windows' names, environment and
+// command line are UTF-16 that need not pair their surrogates; as UTF-8 a lone
+// one became U+FFFD, and the name could not be opened again. WTF-8 holds every
+// one exactly, and is plain UTF-8 for any name that is valid UTF-16. Names,
+// values and arguments cross as WTF-8; the console stays UTF-8 (it is text).
+
+/// The terminated "w" as WTF-8, terminator included, into "out" (NULL just
+/// counts): the number of bytes. A surrogate pair is one 4-byte character.
+_gnu_inline _gnu_nonnull(1)
+size_t _sppc_win_wtf8(wchar_t const *w, char *out) {
+  size_t at = 0;
+  for (;; ++w) {
+    uint32_t c = (uint16_t)w[0];
+    const uint32_t next = c == 0 ? 0 : (uint16_t)w[1];
+    if (c >= 0xD800 && c <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF) {
+      c = 0x10000 + ((c - 0xD800) << 10) + (next - 0xDC00);
+      ++w;
+    }
+    unsigned char b[4];
+    size_t k;
+    if (c < 0x80) {
+      b[0] = (unsigned char)c;
+      k = 1;
+    } else if (c < 0x800) {
+      b[0] = (unsigned char)(0xC0 | c >> 6);
+      b[1] = (unsigned char)(0x80 | (c & 0x3F));
+      k = 2;
+    } else if (c < 0x10000) {
+      b[0] = (unsigned char)(0xE0 | c >> 12);
+      b[1] = (unsigned char)(0x80 | (c >> 6 & 0x3F));
+      b[2] = (unsigned char)(0x80 | (c & 0x3F));
+      k = 3;
+    } else {
+      b[0] = (unsigned char)(0xF0 | c >> 18);
+      b[1] = (unsigned char)(0x80 | (c >> 12 & 0x3F));
+      b[2] = (unsigned char)(0x80 | (c >> 6 & 0x3F));
+      b[3] = (unsigned char)(0x80 | (c & 0x3F));
+      k = 4;
+    }
+    if (out != NULL) { memcpy(out + at, b, k); }
+    at += k;
+    if (c == 0) { return at; }
+  }
+}
+
+/// The terminated WTF-8 "s" as UTF-16, terminator included, into "out" (NULL
+/// just counts): the number of units, or 0 for bytes that are not WTF-8 (a
+/// stray or missing continuation, an overlong form, past U+10FFFF). A lead
+/// and a trail surrogate written apart, as joining two names can leave them,
+/// come out as the pair they make.
+_gnu_inline _gnu_nonnull(1)
+size_t _sppc_win_wide(char const *s, wchar_t *out) {
+  unsigned char const *p = (unsigned char const*)s;
+  size_t at = 0;
+  for (;;) {
+    const unsigned char lead = *p++;
+    uint32_t c;
+    size_t more;
+    uint32_t least;
+    if (lead < 0x80) {
+      c = lead;
+      more = 0;
+      least = 0;
+    } else if (lead >= 0xC2 && lead <= 0xDF) {
+      c = lead & 0x1Fu;
+      more = 1;
+      least = 0x80;
+    } else if (lead >= 0xE0 && lead <= 0xEF) {
+      c = lead & 0x0Fu;
+      more = 2;
+      least = 0x800;
+    } else if (lead >= 0xF0 && lead <= 0xF4) {
+      c = lead & 0x07u;
+      more = 3;
+      least = 0x10000;
+    } else {
+      return 0;
+    }
+    for (size_t i = 0; i < more; ++i) {
+      const unsigned char b = *p++;
+      if ((b & 0xC0) != 0x80) { return 0; }
+      c = c << 6 | (b & 0x3Fu);
+    }
+    if (c < least || c > 0x10FFFF) { return 0; }
+    if (c >= 0x10000) {
+      if (out != NULL) {
+        out[at] = (wchar_t)(0xD800 + ((c - 0x10000) >> 10));
+        out[at + 1] = (wchar_t)(0xDC00 + ((c - 0x10000) & 0x3FF));
+      }
+      at += 2;
+    } else {
+      if (out != NULL) { out[at] = (wchar_t)c; }
+      ++at;
+    }
+    if (c == 0) { return at; }
+  }
+}
 
 /// The most a path sppc fills in without being told the room ("sppc_realpath")
 /// may take, terminator included: Windows' MAX_PATH, the stdlib's "path_max".
 #define _SPPC_WIN_PATH_MAX MAX_PATH
 
 /// "path" as UTF-16, in a block the caller frees: ENOENT for an empty path,
-/// as POSIX has it, and EILSEQ for bytes that are not UTF-8.
+/// as POSIX has it, and EILSEQ for bytes that are not WTF-8.
 _gnu_inline _gnu_nonnull(1, 2)
 int _sppc_win_wpath(char const *path, wchar_t **out) {
   *out = NULL;
   if (*path == '\0') { return SPPC_ENOENT; }
-  const int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, NULL, 0);
-  if (n <= 0) { return SPPC_EILSEQ; }
-  wchar_t *const w = (wchar_t*)malloc((size_t)n * sizeof *w);
+  const size_t n = _sppc_win_wide(path, NULL);
+  if (n == 0) { return SPPC_EILSEQ; }
+  wchar_t *const w = (wchar_t*)malloc(n * sizeof *w);
   if (w == NULL) { return SPPC_ENOMEM; }
-  MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, w, n);
+  _sppc_win_wide(path, w);
   *out = w;
   return 0;
 }
 
-/// A path of Windows' back as UTF-8, terminated, into "buffer" of "size":
+/// A path of Windows' back as WTF-8, terminated, into "buffer" of "size":
 /// without the "\\?\" a final path name starts with ("\\?\UNC\" becomes the
 /// "\\" of a share). "too_long" when it does not fit, the buffer emptied.
 _gnu_inline _gnu_nonnull(1)
-int _sppc_win_utf8_path(wchar_t const *w, char *buffer, const size_t size, const int too_long) {
+int _sppc_win_wtf8_path(wchar_t const *w, char *buffer, const size_t size, const int too_long) {
   bool unc = false;
   if (wcsncmp(w, L"\\\\?\\UNC\\", 8) == 0) {
     w += 8;
@@ -2413,17 +2512,16 @@ int _sppc_win_utf8_path(wchar_t const *w, char *buffer, const size_t size, const
   } else if (wcsncmp(w, L"\\\\?\\", 4) == 0) {
     w += 4;
   }
-  const int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, NULL, 0, NULL, NULL);
-  const size_t need = (size_t)(n > 0 ? n : 0) + (unc ? 2 : 0);
-  if (n <= 0 || need > size) {
+  const size_t need = _sppc_win_wtf8(w, NULL) + (unc ? 2 : 0);
+  if (need > size) {
     if (size > 0) { buffer[0] = '\0'; }
-    return n <= 0 ? SPPC_EILSEQ : too_long;
+    return too_long;
   }
   if (unc) {
     buffer[0] = '\\';
     buffer[1] = '\\';
   }
-  WideCharToMultiByte(CP_UTF8, 0, w, -1, buffer + (unc ? 2 : 0), n, NULL, NULL);
+  _sppc_win_wtf8(w, buffer + (unc ? 2 : 0));
   return 0;
 }
 
@@ -2595,8 +2693,7 @@ int _sppc_win_stat_handle(HANDLE h, const bool link, struct sppc_stat *out) {
     out->mode = SPPC_S_IFLNK | 0777;
     wchar_t *target = NULL;
     if (_sppc_win_link_target(h, &target) == 0) {
-      const int bytes = WideCharToMultiByte(CP_UTF8, 0, target, -1, NULL, 0, NULL, NULL);
-      out->size = bytes > 0 ? bytes - 1 : 0;
+      out->size = (int64_t)_sppc_win_wtf8(target, NULL) - 1;
       free(target);
     }
   } else if (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
@@ -2914,7 +3011,7 @@ _sppc_api int sppc_getcwd(char *_sppc_restrict buffer, const size_t size) {
   int err;
   if (w == NULL) { err = need > 0 ? SPPC_ENOMEM : _sppc_errno_win32(GetLastError()); }
   else if (GetFinalPathNameByHandleW(h, w, need, FILE_NAME_NORMALIZED) == 0) { err = _sppc_errno_win32(GetLastError()); }
-  else { err = _sppc_win_utf8_path(w, buffer, size, SPPC_ERANGE); }
+  else { err = _sppc_win_wtf8_path(w, buffer, size, SPPC_ERANGE); }
   free(w);
   CloseHandle(h);
   return err;
@@ -2952,7 +3049,7 @@ _sppc_api int sppc_realpath(char const *_sppc_restrict path, char *_sppc_restric
   CloseHandle(h);
   if (len == 0) { return _sppc_errno_win32(win); }
   if (len >= sizeof final / sizeof *final) { return SPPC_ENAMETOOLONG; }
-  return _sppc_win_utf8_path(final, buffer, _SPPC_WIN_PATH_MAX, SPPC_ENAMETOOLONG);
+  return _sppc_win_wtf8_path(final, buffer, _SPPC_WIN_PATH_MAX, SPPC_ENAMETOOLONG);
 }
 
 // ---------- names ----------
@@ -3199,12 +3296,11 @@ _sppc_api int sppc_readlink(char const *_sppc_restrict path, char *_sppc_restric
     wchar_t *target = NULL;
     err = _sppc_win_link_target(h, &target);
     if (err == 0) {
-      const int n = WideCharToMultiByte(CP_UTF8, 0, target, -1, NULL, 0, NULL, NULL);
-      if (n <= 0 || (size_t)n > buffer_size) {
+      if (_sppc_win_wtf8(target, NULL) > buffer_size) {
         buffer[0] = '\0';
-        err = n <= 0 ? SPPC_EILSEQ : SPPC_ERANGE;
+        err = SPPC_ERANGE;
       } else {
-        WideCharToMultiByte(CP_UTF8, 0, target, -1, buffer, n, NULL, NULL);
+        _sppc_win_wtf8(target, buffer);
       }
       free(target);
     }
@@ -4805,12 +4901,12 @@ int _sppc_win_env_name(char const *key, wchar_t **out) {
   return err == SPPC_EILSEQ ? SPPC_EINVAL : err;
 }
 
-/// A variable's value as UTF-8, in memory the caller frees ("*out", NULL on
+/// A variable's value as WTF-8, in memory the caller frees ("*out", NULL on
 /// an error). The environment is Windows' own, in UTF-16, read with its "W"
 /// calls: the C library's copy is in the ANSI code page, and would garble
 /// anything else. ENOENT for a variable that is not set.
 _gnu_inline _gnu_nonnull(1, 2)
-int _sppc_win_getenv_utf8(char const *key, char **out) {
+int _sppc_win_getenv_wtf8(char const *key, char **out) {
   *out = NULL;
   wchar_t *name;
   const int bad = _sppc_win_env_name(key, &name);
@@ -4830,18 +4926,16 @@ int _sppc_win_getenv_utf8(char const *key, char **out) {
     err = SPPC_ENOMEM;
   } else {
     GetEnvironmentVariableW(name, value, need);
-    const int bytes = WideCharToMultiByte(CP_UTF8, 0, value, -1, NULL, 0, NULL, NULL);
-    *out = bytes > 0 ? (char*)malloc((size_t)bytes) : NULL;
-    if (bytes <= 0) { err = SPPC_EILSEQ; }
-    else if (*out == NULL) { err = SPPC_ENOMEM; }
-    else { WideCharToMultiByte(CP_UTF8, 0, value, -1, *out, bytes, NULL, NULL); }
+    *out = (char*)malloc(_sppc_win_wtf8(value, NULL));
+    if (*out == NULL) { err = SPPC_ENOMEM; }
+    else { _sppc_win_wtf8(value, *out); }
   }
   free(value);
   free(name);
   return err;
 }
 
-/// The variable's value, crossing as UTF-8 (above). So the C library's
+/// The variable's value, crossing as WTF-8 (above). So the C library's
 /// "getenv" does not see what "sppc_setenv" sets; a child process will, once
 /// sppc starts them. ENOENT for a variable that is not set; ERANGE when its
 /// value and terminator do not fit (either way "out" is emptied).
@@ -4850,7 +4944,7 @@ _sppc_api int sppc_getenv(char const *_sppc_restrict key, char *_sppc_restrict o
   if (size == 0) { return SPPC_ERANGE; }
   *out = '\0';
   char *value;
-  int err = _sppc_win_getenv_utf8(key, &value);
+  int err = _sppc_win_getenv_wtf8(key, &value);
   if (err == 0) {
     const size_t len = strlen(value);
     if (len >= size) { err = SPPC_ERANGE; }
@@ -4860,13 +4954,13 @@ _sppc_api int sppc_getenv(char const *_sppc_restrict key, char *_sppc_restrict o
   return err;
 }
 
-/// The length in bytes of a variable's value as UTF-8, without its
+/// The length in bytes of a variable's value as WTF-8, without its
 /// terminator, so a buffer for "sppc_getenv" can be sized to fit. ENOENT for
 /// one not set.
 _gnu_inline _gnu_restrict_access(read_only, 1) _gnu_restrict_access(write_only, 2) _gnu_nonnull(1, 2)
 _sppc_api int sppc_getenv_len(char const *_sppc_restrict key, size_t *_sppc_restrict out_len) {
   char *value;
-  const int err = _sppc_win_getenv_utf8(key, &value);
+  const int err = _sppc_win_getenv_wtf8(key, &value);
   if (err == 0) { *out_len = strlen(value); }
   free(value);
   return err;
@@ -4956,9 +5050,9 @@ size_t _sppc_win_split_args(wchar_t const *cmd, wchar_t *out, size_t *out_chars)
 /// Keep the program's arguments, for "sppc_arg_count" and "sppc_arg". Not
 /// the "argv" the C runtime passed "main": that is in the ANSI code page, and
 /// would garble any other character. They are split again from the command
-/// line, in UTF-16 ("_sppc_win_split_args"), and kept as UTF-8, in one block
-/// that lives as long as the process. Should that fail (no memory, or a
-/// command line that is not UTF-16), the given "argv" is kept.
+/// line, in UTF-16 ("_sppc_win_split_args"), and kept as WTF-8, in one block
+/// that lives as long as the process. Should that fail (no memory), the given
+/// "argv" is kept.
 _gnu_inline
 _sppc_api void sppc_set_args(const int argc, char **argv) {
   _sppc_nargs = argc > 0 && argv != NULL ? (size_t)argc : 0;
@@ -4975,12 +5069,7 @@ _sppc_api void sppc_set_args(const int argc, char **argv) {
   size_t bytes = n * sizeof(char*);
   wchar_t const *w = wide;
   for (size_t i = 0; i < n; ++i) {
-    const int len = WideCharToMultiByte(CP_UTF8, 0, w, -1, NULL, 0, NULL, NULL);
-    if (len <= 0) {
-      free(wide);
-      return;
-    }
-    bytes += (size_t)len;
+    bytes += _sppc_win_wtf8(w, NULL);
     w += wcslen(w) + 1;
   }
   char **const table = (char**)malloc(bytes);
@@ -4989,7 +5078,7 @@ _sppc_api void sppc_set_args(const int argc, char **argv) {
     w = wide;
     for (size_t i = 0; i < n; ++i) {
       table[i] = at;
-      at += WideCharToMultiByte(CP_UTF8, 0, w, -1, at, (int)(bytes - (size_t)(at - (char*)table)), NULL, NULL);
+      at += _sppc_win_wtf8(w, at);
       w += wcslen(w) + 1;
     }
     _sppc_nargs = n;
