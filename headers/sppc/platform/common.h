@@ -306,6 +306,7 @@ enum {
   SPPC_CHECK_DIVIDE_BY_ZERO = 0x16,
   SPPC_CHECK_REMAINDER_BY_ZERO = 0x17,
   SPPC_CHECK_SIGNED_DIV = 0x18, // the minimum divided by -1; its remainder is 0, not a check
+  SPPC_CHECK_SHIFT_DISTANCE = 0x19, // a: the distance, b: the width; a shift by at least the width
 };
 
 /// The one path a failed runtime check ends the process through: a fixed
@@ -379,6 +380,12 @@ _sppc_api void sppc_check_failed(
       break;
     case SPPC_CHECK_SIGNED_DIV:
       _sppc_bt_put("signed divide overflowed");
+      break;
+    case SPPC_CHECK_SHIFT_DISTANCE:
+      _sppc_bt_put("shift distance ");
+      _sppc_bt_put_dec(a);
+      _sppc_bt_put(" is not less than the width ");
+      _sppc_bt_put_dec(b);
       break;
     default:
       _sppc_bt_put("unknown check ");
