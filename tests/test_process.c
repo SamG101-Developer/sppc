@@ -444,6 +444,7 @@ static void check_endings(void) {
   expect_check(0x16, 0, 0, "check failed: division by zero");
   expect_check(0x17, 0, 0, "check failed: remainder by zero");
   expect_check(0x18, 0, 0, "check failed: signed divide overflowed");
+  expect_check(0x19, 40, 32, "check failed: shift distance 40 is not less than the width 32");
   expect_check(0x99, 0, 0, "check failed: unknown check 153");
   expect_check(1, UINT64_MAX, 0, "index 18446744073709551615 out of bounds for length 0");
 
