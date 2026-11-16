@@ -5,8 +5,9 @@
 // at once, even while the file is open, and a rename replaces a file open
 // or read-only; the read-only attribute is the owner's write bit, through
 // chmod, stat and access; a program is one by its extension; fcntl's flags
-// and record locks; a non-ASCII name crosses intact; and what a file has
-// that a pipe does not (ESPIPE, the type stat reports).
+// and record locks; a non-ASCII name crosses intact, and so does one with a
+// lone surrogate (as WTF-8); and what a file has that a pipe does not
+// (ESPIPE, the type stat reports).
 
 #if !SPPC_PLATFORM_WINDOWS
 
@@ -87,9 +88,46 @@ static void check_unicode(void) {
   sppc_close(fd);
   CHECK(sppc_unlink(path) == 0);
 
-  // Bytes that are not UTF-8 are not a name.
+  // Bytes that are not WTF-8 are not a name: a stray byte, an overlong form,
+  // a lead with its continuation missing, past U+10FFFF.
   CHECK(sppc_open("bad\xFF", SPPC_O_RDONLY, 0, &fd) == SPPC_EILSEQ);
+  CHECK(sppc_open("bad\xC0\x80", SPPC_O_RDONLY, 0, &fd) == SPPC_EILSEQ);
+  CHECK(sppc_open("bad\xE2\x82", SPPC_O_RDONLY, 0, &fd) == SPPC_EILSEQ);
+  CHECK(sppc_open("bad\xF4\x90\x80\x80", SPPC_O_RDONLY, 0, &fd) == SPPC_EILSEQ);
   CHECK(sppc_open("", SPPC_O_RDONLY, 0, &fd) == SPPC_ENOENT);
+}
+
+static void check_lone_surrogate(void) {
+  // A name Windows allows that is not valid UTF-16: "lone-" and a lead
+  // surrogate with no trail. It crosses as WTF-8 (ED A0 80), so the name
+  // sppc hands back opens the same file again, where as UTF-8 it was U+FFFD.
+  wchar_t wide[300];
+  const int n = MultiByteToWideChar(CP_UTF8, 0, dir, -1, wide, 280);
+  CHECK(n > 0);
+  wcscat(wide, L"\\lone-\xD800");
+  const HANDLE h = CreateFileW(wide, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+  CHECK(h != INVALID_HANDLE_VALUE);
+  CloseHandle(h);
+
+  char path[300], real[MAX_PATH], want[MAX_PATH];
+  at(path, "lone-\xED\xA0\x80");
+  CHECK(exists(path));
+  CHECK(sppc_realpath(dir, want) == 0);
+  strcat(want, "\\lone-\xED\xA0\x80");
+  CHECK(sppc_realpath(path, real) == 0 && strcmp(real, want) == 0);
+  int fd = -1;
+  CHECK(sppc_open(real, SPPC_O_RDONLY, 0, &fd) == 0);
+  sppc_close(fd);
+  CHECK(sppc_unlink(real) == 0 && !exists(path));
+
+  // A pair written as two lone halves (ED A0 BD, ED B8 80) is the one
+  // character they make, U+1F600, whose UTF-8 is F0 9F 98 80.
+  char halves[300], whole[300];
+  at(halves, "pair-\xED\xA0\xBD\xED\xB8\x80");
+  at(whole, "pair-\xF0\x9F\x98\x80");
+  CHECK(make_file(halves, "x") == 0);
+  CHECK(exists(whole));
+  CHECK(sppc_unlink(whole) == 0);
 }
 
 // ==================== METADATA ====================
@@ -333,6 +371,7 @@ int main(void) {
   check_temp_dir(dir, sizeof dir, "files");
   check_names_while_open();
   check_unicode();
+  check_lone_surrogate();
   check_modes();
   check_kinds();
   check_statvfs();

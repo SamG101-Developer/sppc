@@ -23,5 +23,6 @@ Paths are relative to this folder. Read a note before relying on its one-line su
 - [Branch protection](runtime/branch-protection.md) — AArch64 ELF built -mbranch-protection=bti+pac-ret; switch_aapcs64.S needs its own bti c + property note; BTI/PAC faults reported as CFI failures, no stack walk
 - [Source lines from a table](runtime/source-lines-table.md) — spp links a line table in, main hands it over (sppc_set_source_lines); format in backtrace/common.h; no DWARF parsing here
 - [Debugger stop on failure](runtime/debugger-stop-on-failure.md) — sppc_debug_fatal, called before _exit on check failures/abort; tools break on it (like rust_panic); never rename
-- [Program arguments](runtime/program-arguments.md) — sppc_set_args from spp's C main; Windows splits GetCommandLineW itself into UTF-8 (CRT argv is ANSI); no shell32
+- [Program arguments](runtime/program-arguments.md) — sppc_set_args from spp's C main; Windows splits GetCommandLineW itself into WTF-8 (CRT argv is ANSI); no shell32
+- [Names cross as WTF-8](runtime/names-cross-as-wtf8.md) — Windows paths/env/args are WTF-8 (_sppc_win_wtf8/_sppc_win_wide), so lone surrogates round-trip; console stays UTF-8
 - [Closure env free checks owns](runtime/closure-env-free-checks-owns.md) — after running a closure, _sppc_closure_release_env, never a bare free: a borrow-only closure's env is on a stack
