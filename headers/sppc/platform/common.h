@@ -307,7 +307,36 @@ enum {
   SPPC_CHECK_REMAINDER_BY_ZERO = 0x17,
   SPPC_CHECK_SIGNED_DIV = 0x18, // the minimum divided by -1; its remainder is 0, not a check
   SPPC_CHECK_SHIFT_DISTANCE = 0x19, // a: the distance, b: the width; a shift by at least the width
+  SPPC_CHECK_FLOAT_INVALID = 0x20, // a: the operation (_sppc_float_op_name), b: the width; a NaN result
+  SPPC_CHECK_FLOAT_DIVIDE_BY_ZERO = 0x21, // a, b: as above; a division by zero
+  SPPC_CHECK_FLOAT_OVERFLOW = 0x22, // a, b: as above; an infinite result (overflowed, or from an infinity)
 };
+
+/// The float operation a float check names, by the number the compiler
+/// passes (FloatOp in llvm_fn_impls.cpp; only ever added to).
+_gnu_inline
+char const *_sppc_float_op_name(const uint64_t op) {
+  switch (op) {
+    case 1: return "add";
+    case 2: return "subtract";
+    case 3: return "multiply";
+    case 4: return "divide";
+    case 5: return "remainder";
+    case 6: return "square root";
+    case 7: return "conversion";
+    default: return "operation";
+  }
+}
+
+/// " (F<width> <operation>)", after a float check's message.
+_gnu_inline
+void _sppc_put_float_op(const uint64_t op, const uint64_t width) {
+  _sppc_bt_put(" (F");
+  _sppc_bt_put_dec(width);
+  _sppc_bt_put(" ");
+  _sppc_bt_put(_sppc_float_op_name(op));
+  _sppc_bt_put(")");
+}
 
 /// The one path a failed runtime check ends the process through: a fixed
 /// message naming the check, with the values it was given, then a backtrace
@@ -386,6 +415,18 @@ _sppc_api void sppc_check_failed(
       _sppc_bt_put_dec(a);
       _sppc_bt_put(" is not less than the width ");
       _sppc_bt_put_dec(b);
+      break;
+    case SPPC_CHECK_FLOAT_INVALID:
+      _sppc_bt_put("float invalid operation: the result is a NaN");
+      _sppc_put_float_op(a, b);
+      break;
+    case SPPC_CHECK_FLOAT_DIVIDE_BY_ZERO:
+      _sppc_bt_put("float division by zero");
+      _sppc_put_float_op(a, b);
+      break;
+    case SPPC_CHECK_FLOAT_OVERFLOW:
+      _sppc_bt_put("float overflow: the result is infinite");
+      _sppc_put_float_op(a, b);
       break;
     default:
       _sppc_bt_put("unknown check ");
