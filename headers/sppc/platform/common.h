@@ -310,6 +310,7 @@ enum {
   SPPC_CHECK_FLOAT_INVALID = 0x20, // a: the operation (_sppc_float_op_name), b: the width; a NaN result
   SPPC_CHECK_FLOAT_DIVIDE_BY_ZERO = 0x21, // a, b: as above; a division by zero
   SPPC_CHECK_FLOAT_OVERFLOW = 0x22, // a, b: as above; an infinite result (overflowed, or from an infinity)
+  SPPC_CHECK_FLOAT_NOT_FINITE = 0x23, // a, b: as above; a NaN or infinite result, in a loop whose checks were deferred
 };
 
 /// The float operation a float check names, by the number the compiler
@@ -324,6 +325,23 @@ char const *_sppc_float_op_name(const uint64_t op) {
     case 5: return "remainder";
     case 6: return "square root";
     case 7: return "conversion";
+    case 8: return "exp";
+    case 9: return "exp2";
+    case 10: return "exp10";
+    case 11: return "log";
+    case 12: return "log2";
+    case 13: return "log10";
+    case 14: return "sin";
+    case 15: return "cos";
+    case 16: return "tan";
+    case 17: return "asin";
+    case 18: return "acos";
+    case 19: return "atan";
+    case 20: return "atan2";
+    case 21: return "sinh";
+    case 22: return "cosh";
+    case 23: return "tanh";
+    case 24: return "pow";
     default: return "operation";
   }
 }
@@ -426,6 +444,10 @@ _sppc_api void sppc_check_failed(
       break;
     case SPPC_CHECK_FLOAT_OVERFLOW:
       _sppc_bt_put("float overflow: the result is infinite");
+      _sppc_put_float_op(a, b);
+      break;
+    case SPPC_CHECK_FLOAT_NOT_FINITE:
+      _sppc_bt_put("float invalid operation or overflow: the result is a NaN or infinite");
       _sppc_put_float_op(a, b);
       break;
     default:
