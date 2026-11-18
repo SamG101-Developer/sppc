@@ -20,6 +20,7 @@
 #include <sppc/types.h>
 #include <sppc/errors.h>
 #include <sppc/closure.h>
+#include <sppc/softfloat.h>
 
 // The platform's file, which includes the async runtime and the crash
 // reporter once what they stand on is in place, and the api over them.

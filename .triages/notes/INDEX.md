@@ -26,3 +26,4 @@ Paths are relative to this folder. Read a note before relying on its one-line su
 - [Program arguments](runtime/program-arguments.md) — sppc_set_args from spp's C main; Windows splits GetCommandLineW itself into WTF-8 (CRT argv is ANSI); no shell32
 - [Names cross as WTF-8](runtime/names-cross-as-wtf8.md) — Windows paths/env/args are WTF-8 (_sppc_win_wtf8/_sppc_win_wide), so lone surrogates round-trip; console stays UTF-8
 - [Closure env free checks owns](runtime/closure-env-free-checks-owns.md) — after running a closure, _sppc_closure_release_env, never a bare free: a borrow-only closure's env is on a stack
+- [Half conversions on Windows](runtime/half-conversions-on-windows.md) — __extendhfsf2/__truncsfhf2/__truncdfhf2 exported on x86-64 Windows (MSVC CRT has none); half in a float's low 16 bits
