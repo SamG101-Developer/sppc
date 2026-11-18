@@ -20,6 +20,17 @@ extern int _sppc_seal_range(uintptr_t start, uintptr_t end, uintptr_t page);
 extern int _sppc_seal_object(struct dl_phdr_info *info, size_t size, void *data);
 #endif
 
+// ==================== SOFT FLOAT ====================
+
+extern uint16_t _sppc_f64_to_f16_bits(uint64_t bits);
+extern uint16_t _sppc_f32_to_f16_bits(uint32_t bits);
+extern uint32_t _sppc_f16_to_f32_bits(uint16_t bits);
+#if SPPC_PLATFORM_WINDOWS && SPPC_ARCH_X86_64
+extern float __extendhfsf2(float half);
+extern float __truncsfhf2(float value);
+extern float __truncdfhf2(double value);
+#endif
+
 // ==================== SPLIT STACK ====================
 
 // The split stack's pointer: exported for the code llvm splits, except from a

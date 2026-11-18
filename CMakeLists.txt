@@ -143,7 +143,7 @@ if (SPPC_BUILD_TESTS)
   if (WIN32)
     set(SPPC_WINDOWS_PORTED
       test_heap test_time test_threads test_fs test_mem test_net test_process
-      test_gt_scheduling test_gt_stress test_gt_locks test_gt_safestack)
+      test_gt_scheduling test_gt_stress test_gt_locks test_gt_safestack test_softfloat)
     list(TRANSFORM SPPC_WINDOWS_PORTED PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/tests/")
     list(TRANSFORM SPPC_WINDOWS_PORTED APPEND ".c")
     list(FILTER SPPC_TESTS INCLUDE REGEX "_win\\.c$")
