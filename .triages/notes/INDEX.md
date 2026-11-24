@@ -18,6 +18,7 @@ Paths are relative to this folder. Read a note before relying on its one-line su
 - [msvc /O2 hang on equal args](ci/msvc-o2-hang-equal-args.md) — cl 14.52 never finishes inlining checks on one value passed twice; sppc_mmap forwards out of line
 - [Bindgen libclang/clang mismatch](tools/bindgen-libclang-resource-dir-mismatch.md) — builtin headers from another clang version hide stdint types; tools/main.py now picks a matching clang
 - [Byte pointer params](tools/bindgen-byte-pointer-params.md) — void*/char*/unsigned char* params → CRefBytePtr/CMutBytePtr by constness; returns, fields, handles stay CVoidPtr
+- [Opaque structs](tools/bindgen-opaque-structs.md) — --opaque NAME binds pointers to a complete struct as CVoidPtr (OSSL_PARAM); const T x[] params now &T, not &mut T
 - [FreeBSD loopback is deferred](tests/freebsd-loopback-delivery-deferred.md) — written TCP data reaches the peer later; poll the receiver alone before multi-fd or zero-timeout checks
 - [msvc arm64 noreturn tail jump](tests/msvc-arm64-noreturn-tail-jump.md) — direct abort() becomes `b abort`, no frame; crash tests call through a volatile pointer then store after_call
 - [Branch protection](runtime/branch-protection.md) — AArch64 ELF built -mbranch-protection=bti+pac-ret; switch_aapcs64.S needs its own bti c + property note; BTI/PAC faults reported as CFI failures, no stack walk

@@ -59,6 +59,7 @@ Type mapping (C -> S++, see std::cffi):
     T* / const T*                &mut T / &T
     T** (any nested pointer)     &mut CVoidPtr / &CVoidPtr
     pointer to incomplete type   CVoidPtr (an opaque handle)
+    --opaque struct pointer      CVoidPtr (a complete struct C treats as an array or nullable handle, e.g. OSSL_PARAM)
     function pointer             CVoidPtr (a raw C function pointer is not a CClosure)
     any pointer returned         CVoidPtr (it may be null; S++ cannot return a borrow)
     any pointer in a struct      CVoidPtr (S++ cannot store a borrow)
@@ -91,7 +92,7 @@ CK = cl.CursorKind
 
 # Every S++ keyword; a C name that collides with one gets a trailing "_".
 SPP_KEYWORDS = frozenset({
-    "and", "as", "async", "await", "caps", "case", "cls", "cmp", "cor", "defer", "else", "exit", "ext", "false",
+    "and", "as", "async", "await", "caps", "case", "cls", "cmp", "cor", "else", "exit", "ext", "false",
     "fun", "gen", "in", "is", "let", "loop", "mut", "not", "of", "or", "res", "ret", "self", "skip", "sup", "to",
     "true", "type", "use", "with",
 })
@@ -127,6 +128,7 @@ class Options:
     constant_roots: list[Path] = field(default_factory=list)  # empty: the same as roots
     keep_prefix: bool = False
     closure_types: set[str] = field(default_factory=set)
+    opaque_types: set[str] = field(default_factory=set)  # complete structs whose pointers bind as CVoidPtr
     constants: bool = False
     comments: bool = True
     exports: Optional[set[str]] = None  # --library: only bind the functions it exports
@@ -405,7 +407,7 @@ class Generator:
         if kind == TK.POINTER:
             return self._pointer(t, pos)
         if kind in (TK.CONSTANTARRAY, TK.INCOMPLETEARRAY, TK.VARIABLEARRAY, TK.DEPENDENTSIZEDARRAY):
-            return self._array(canon, pos)
+            return self._array(canon, pos, t)
         if kind == TK.RECORD:
             if pos == Pos.RETURN and canon.get_size() < 0:
                 raise Unsupported(f"returns incomplete type '{t.spelling}' by value")
@@ -423,6 +425,14 @@ class Generator:
                 t = t.get_declaration().underlying_typedef_type
             else:
                 return
+
+    def _is_opaque(self, t: cl.Type) -> bool:
+        """Whether --opaque named t, by any typedef it is spelt through or by its struct tag."""
+        if not self._opts.opaque_types:
+            return False
+        names = set(self._typedef_names(t))
+        names.add(t.get_canonical().get_declaration().spelling)
+        return not names.isdisjoint(self._opts.opaque_types)
 
     def _desugar(self, t: cl.Type) -> cl.Type:
         """Strip typedefs, keeping the sugar of whatever the typedef names."""
@@ -461,14 +471,21 @@ class Generator:
         # An opaque handle: nothing on the S++ side can know its layout.
         if pointee_canon.kind == TK.RECORD and pointee_canon.get_size() < 0:
             return self.use("CVoidPtr")
+        # A complete struct the caller asked to treat as opaque (--opaque): C passes it as an array or a nullable
+        # pointer, which a single borrow cannot express, and returns of it are already CVoidPtr.
+        if pointee_canon.kind == TK.RECORD and self._is_opaque(pointee):
+            return self.use("CVoidPtr")
 
         ref = "&" if pointee.is_const_qualified() else "&mut "
         return ref + self.map_type(pointee, Pos.POINTEE)
 
-    def _array(self, canon: cl.Type, pos: Pos) -> str:
+    def _array(self, canon: cl.Type, pos: Pos, t: Optional[cl.Type] = None) -> str:
         if pos == Pos.PARAM:
-            # "int a[4]" as a parameter is really "int *a".
-            return self._pointer_to(canon.get_array_element_type(), canon, pos)
+            # "int a[4]" as a parameter is really "int *a". The element comes from the sugared array where there is
+            # one, so a typedef'd element ("const OSSL_PARAM params[]") keeps the name --opaque matches on.
+            sugared = self._desugar(t) if t is not None else canon
+            element = (sugared if sugared.kind == canon.kind else canon).get_array_element_type()
+            return self._pointer_to(element, canon, pos)
         if pos != Pos.FIELD:
             raise Unsupported(f"array type '{canon.spelling}' outside a struct")
         if canon.kind != TK.CONSTANTARRAY:
@@ -792,6 +809,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--keep-prefix", action="store_true", help="filter on --prefix but keep it in S++ names")
     ap.add_argument("--closure-type", action="append", default=[], metavar="NAME",
                     help="a {fn, env} struct/typedef to map to CClosure (e.g. sppc_closure)")
+    ap.add_argument("--opaque", action="append", default=[], metavar="NAME",
+                    help="bind pointers to this complete struct/typedef as CVoidPtr, for structs C passes as arrays "
+                         "or nullable handles (e.g. OSSL_PARAM) (repeatable)")
     ap.add_argument("--constants", action="store_true", help="also emit enum constants and integer #defines")
     ap.add_argument("--constants-root", action="append", default=[], metavar="PATH",
                     help="only emit constants defined under PATH (default: the same as --root)")
@@ -826,8 +846,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         {Path(h).resolve() if Path(h).is_dir() else Path(h).resolve().parent for h in args.headers})
     constant_roots = [Path(r).resolve() for r in args.constants_root]
     opts = Options(roots=roots, prefixes=args.prefix, constant_roots=constant_roots, keep_prefix=args.keep_prefix,
-                   closure_types=set(args.closure_type), constants=args.constants, comments=not args.no_comments,
-                   exports=library_exports(args.library) if args.library else None)
+                   closure_types=set(args.closure_type), opaque_types=set(args.opaque), constants=args.constants,
+                   comments=not args.no_comments, exports=library_exports(args.library) if args.library else None)
 
     tus = parse_headers(headers, clang_args, want_macros=args.constants)
     if report_diagnostics(tus, args.verbose):
